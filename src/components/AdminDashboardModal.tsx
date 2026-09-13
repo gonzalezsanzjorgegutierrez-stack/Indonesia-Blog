@@ -25,14 +25,12 @@ interface AdminDashboardModalProps {
 
 export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   posts,
-  stories,
   islandPins,
   stats,
   onClose,
   onSavePost,
   onDeletePost,
   onSaveStory,
-  onDeleteStory,
   onSaveIslandPins,
   onSaveStats,
   onRefreshData,
@@ -145,7 +143,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       dayNumber: Number(postDayNumber),
       coverImage: formatImageUrl(postCoverImage),
       galleryImages: postGalleryImages.map(formatImageUrl),
-      videoUrl: postVideoUrl || undefined,
+      videoUrl: postVideoUrl,
       excerpt: postExcerpt || postContent.slice(0, 150) + '...',
       content: postContent,
       tags: postTags.split(',').map((t) => t.trim()).filter(Boolean),
@@ -223,9 +221,6 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     showNotice('Ajustes y estadísticas actualizados');
   };
 
-  const resetStatsForm = () => {
-    // Reset stats form (not needed right now)
-  };
 
   // --- MAP PIN CRUD HANDLERS ---
   const handleSaveMapPin = (e: React.FormEvent) => {
