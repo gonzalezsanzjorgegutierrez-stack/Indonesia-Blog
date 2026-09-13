@@ -236,6 +236,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       lat: mapPinLat,
       lng: mapPinLng,
       status: mapPinStatus,
+      visitsCount: 0,
     };
 
     let newPins;
