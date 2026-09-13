@@ -1,0 +1,111 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Plus+Jakarta+Sans:ital,wght@0,300..800;1,300..800&display=swap');
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+:root {
+  --font-serif: 'Playfair Display', Georgia, serif;
+  --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
+  --color-emerald-dark: #0A2F25;
+  --color-emerald-deep: #0F382C;
+  --color-amber-gold: #E07A5F;
+  --color-sand-light: #FBF8F3;
+  --color-turquoise: #2A9D8F;
+}
+
+html, body {
+  font-family: var(--font-sans);
+  background-color: #0c1a16;
+  color: #f1f5f9;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.font-serif-title {
+  font-family: var(--font-serif);
+}
+
+/* Glassmorphism Cards */
+.glass-panel {
+  background: rgba(15, 56, 44, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+.glass-card {
+  background: rgba(26, 47, 40, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(224, 122, 95, 0.4);
+  box-shadow: 0 16px 36px -10px rgba(0, 0, 0, 0.5), 0 0 20px rgba(42, 157, 143, 0.2);
+}
+
+.glass-pill {
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+/* Mobile Scrollbar & Touch Ergonomics */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #081411;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e4539;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #e07a5f;
+}
+
+/* Leaflet Map Mobile Overrides */
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+  border-radius: 1.5rem;
+  background: #091915 !important;
+}
+.leaflet-popup-content-wrapper, .leaflet-popup-tip {
+  background: #0f382c !important;
+  color: #f1f5f9 !important;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+}
+.leaflet-popup-content {
+  margin: 12px 14px;
+}
+
+/* Text Gradient */
+.text-gradient-gold {
+  background: linear-gradient(135deg, #F4A261 0%, #E07A5F 50%, #E76F51 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.text-gradient-ocean {
+  background: linear-gradient(135deg, #2A9D8F 0%, #E9C46A 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Mobile Input Zoom Prevention & Touch Target Size */
+@media (max-width: 768px) {
+  input, select, textarea {
+    font-size: 16px !important; /* Prevents auto-zoom on iOS Safari */
+  }
+}
