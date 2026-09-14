@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Lightbulb, MapPin, Plane, Package, DollarSign, Smartphone, AlertCircle, Utensils, Navigation, Backpack } from 'lucide-react';
+import { Lightbulb, MapPin, Package, DollarSign, Smartphone, AlertCircle, Utensils, Navigation, Backpack } from 'lucide-react';
 import type { Tip } from '../types/blog';
 
 interface TipsSectionProps {
@@ -14,7 +14,7 @@ export const TipsSection: React.FC<TipsSectionProps> = ({ tips }) => {
   const tipsViaje = tips.filter(t => t.category === 'viaje');
   const tipsIslas = tips.filter(t => t.category === 'isla');
 
-  const islas = Array.from(new Set(tipsIslas.map(t => t.island).filter(Boolean)));
+  const islas = Array.from(new Set(tipsIslas.map(t => t.island).filter((i): i is string => Boolean(i))));
 
   let displayedTips: Tip[] = [];
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import L from 'leaflet';
 import type { Post, Story, IslandPin, TripStats } from '../types/blog';
 import { 
@@ -283,28 +283,31 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   };
 
   // Leaflet Map Picker Initialization
+  const mapInstanceRef = useRef<L.Map | null>(null);
+
   useEffect(() => {
     if (activeTab !== 'map') return;
-    
+
     // Wait for the DOM to render the container
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       const container = document.getElementById('admin-map-picker');
       if (!container) return;
-      
-      // @ts-ignore
-      if (container._leaflet_id) {
-        // @ts-ignore
-        container._leaflet_id = null;
-        container.innerHTML = '';
+
+      // Properly destroy any previous map instance before creating a new one
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
       }
 
       const map = L.map('admin-map-picker').setView([mapPinLat, mapPinLng], 5);
+      mapInstanceRef.current = map;
+
       L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
         attribution: '&copy; OpenStreetMap'
       }).addTo(map);
 
-      let marker = L.marker([mapPinLat, mapPinLng], { draggable: true }).addTo(map);
+      const marker = L.marker([mapPinLat, mapPinLng], { draggable: true }).addTo(map);
 
       // On map click, move marker and update coordinates
       map.on('click', (e) => {
@@ -326,6 +329,15 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       map.invalidateSize();
 
     }, 100);
+
+    // Cleanup: destroy the map instance when leaving the tab or unmounting
+    return () => {
+      clearTimeout(timer);
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+    };
   }, [activeTab, editingMapPinId]);
   // ------------------------------
 

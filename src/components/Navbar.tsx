@@ -178,6 +178,13 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span>Reel de Historias del Día</span>
           </button>
           <button
+            onClick={() => { setActiveSection('consejos'); setMobileMenuOpen(false); }}
+            className="w-full flex items-center space-x-2 px-3 py-2 rounded-lg text-sm text-emerald-100 hover:bg-white/10"
+          >
+            <Lightbulb className="h-4 w-4 text-[#E9C46A]" />
+            <span>Consejos Prácticos</span>
+          </button>
+          <button
             onClick={() => { onOpenSubscribe(); setMobileMenuOpen(false); }}
             className="w-full flex items-center space-x-2 px-3 py-2 rounded-lg text-sm text-emerald-100 hover:bg-white/10"
           >
