@@ -53,6 +53,15 @@ export interface IslandPin {
   coverImage?: string;
 }
 
+export interface Tip {
+  id: string;
+  category: 'preparacion' | 'isla' | 'viaje';
+  island?: string;
+  title: string;
+  description: string;
+  icon: string;
+}
+
 export interface TripStats {
   totalDays: number;
   currentDay: number;

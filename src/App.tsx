@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { 
-  getStoredPosts, savePosts, 
-  getStoredStories, saveStories, 
-  getStoredIslandPins, saveIslandPins, 
-  getStoredStats, saveStats 
+import {
+  getStoredPosts, savePosts,
+  getStoredStories, saveStories,
+  getStoredIslandPins, saveIslandPins,
+  getStoredStats, saveStats
 } from './utils/storage';
-import type { Post, Story, IslandPin, TripStats } from './types/blog';
+import type { Post, Story, IslandPin, TripStats, Tip } from './types/blog';
+import { initialTips } from './data/initialData';
 import { Navbar } from './components/Navbar';
 import { HeroBanner } from './components/HeroBanner';
 import { StoryBar } from './components/StoryBar';
@@ -15,6 +16,7 @@ import { PostDetailModal } from './components/PostDetailModal';
 import { StoryViewerModal } from './components/StoryViewerModal';
 import { SubscribeModal } from './components/SubscribeModal';
 import { AdminDashboardModal } from './components/AdminDashboardModal';
+import { TipsSection } from './components/TipsSection';
 import { Compass, Search, BookOpen } from 'lucide-react';
 
 export default function App() {
@@ -22,6 +24,7 @@ export default function App() {
   const [stories, setStories] = useState<Story[]>(getStoredStories);
   const [islandPins, setIslandPins] = useState<IslandPin[]>(getStoredIslandPins);
   const [stats, setStats] = useState<TripStats>(getStoredStats);
+  const [tips] = useState<Tip[]>(initialTips);
 
   const [activeSection, setActiveSection] = useState<string>('inicio');
   const [selectedIsland, setSelectedIsland] = useState<string | null>(null);
@@ -272,6 +275,11 @@ export default function App() {
           )}
 
         </section>
+
+        {/* Section: CONSEJOS PRÁCTICOS */}
+        {activeSection === 'consejos' && (
+          <TipsSection tips={tips} />
+        )}
 
       </main>
 

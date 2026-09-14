@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Compass, MapPin, BookOpen, Film, Lock, Bell, Sparkles } from 'lucide-react';
+import { Compass, MapPin, BookOpen, Film, Lock, Bell, Sparkles, Lightbulb } from 'lucide-react';
 import type { TripStats } from '../types/blog';
 
 interface NavbarProps {
@@ -90,6 +90,18 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <Film className="h-3.5 w-3.5" />
             <span>Stories Reel</span>
+          </button>
+
+          <button
+            onClick={() => setActiveSection('consejos')}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+              activeSection === 'consejos'
+                ? 'bg-[#E9C46A] text-slate-950 shadow-md'
+                : 'text-emerald-100/80 hover:text-white hover:bg-white/10'
+            }`}
+          >
+            <Lightbulb className="h-3.5 w-3.5" />
+            <span>Consejos</span>
           </button>
         </nav>
 
