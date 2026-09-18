@@ -82,6 +82,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const [editIslandsVisited, setEditIslandsVisited] = useState(stats.islandsVisited);
   const [editPhotosShared, setEditPhotosShared] = useState(stats.photosShared);
   const [editKmTravelled, setEditKmTravelled] = useState(stats.kmTravelled);
+  const [editStartLocation, setEditStartLocation] = useState(stats.startLocation || '');
   const [editCurrentLocation, setEditCurrentLocation] = useState(stats.currentLocation);
   const [editNextStop, setEditNextStop] = useState(stats.nextStop);
   const [editBlogTitle, setEditBlogTitle] = useState(stats.blogTitle || 'Nusa Odyssey');
@@ -215,6 +216,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       islandsVisited: Number(editIslandsVisited),
       photosShared: Number(editPhotosShared),
       kmTravelled: Number(editKmTravelled),
+      startLocation: editStartLocation,
       currentLocation: editCurrentLocation,
       nextStop: editNextStop,
       blogTitle: editBlogTitle,
@@ -1048,6 +1050,16 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                         type="number"
                         value={editKmTravelled}
                         onChange={(e) => setEditKmTravelled(Number(e.target.value))}
+                        className="w-full px-4 py-2 rounded-xl bg-black/50 border border-white/15 text-white text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-emerald-200 mb-1">Lugar de Inicio del Viaje</label>
+                      <input
+                        type="text"
+                        placeholder="Ej: Bali"
+                        value={editStartLocation}
+                        onChange={(e) => setEditStartLocation(e.target.value)}
                         className="w-full px-4 py-2 rounded-xl bg-black/50 border border-white/15 text-white text-sm"
                       />
                     </div>

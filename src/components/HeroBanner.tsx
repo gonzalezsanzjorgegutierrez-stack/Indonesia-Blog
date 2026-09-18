@@ -48,7 +48,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({ stats, onExploreClick, o
 
           {/* Description */}
           <p className="text-base sm:text-lg text-emerald-100/90 leading-relaxed font-light max-w-2xl">
-            Acompáñanos día a día recorriendo desde los volcanes místicos de Java y los arrozales balineses hasta el buceo salvaje en Komodo y los paraísos lejanos de Raja Ampat.
+            Acompáñanos día a día recorriendo desde los arrozales y templos de Bali hasta los dragones de Komodo y el lejano Mar de Banda.
           </p>
 
           {/* Progress Bar Component */}
@@ -71,7 +71,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({ stats, onExploreClick, o
             </div>
 
             <div className="flex justify-between text-[11px] text-emerald-300/70 pt-0.5">
-              <span>Inicio: Java</span>
+              <span>Inicio: {stats.startLocation || 'Bali'}</span>
               <span>Siguiente: {stats.nextStop}</span>
             </div>
           </div>

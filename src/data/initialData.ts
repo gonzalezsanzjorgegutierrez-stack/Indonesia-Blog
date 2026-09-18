@@ -7,6 +7,7 @@ export const initialStats: TripStats = {
   islandsVisited: 1,
   photosShared: 0,
   kmTravelled: 0,
+  startLocation: 'Bali',
   currentLocation: 'Sanur, Bali',
   nextStop: 'Nusa Penida',
   blogTitle: 'Nusa Odyssey',

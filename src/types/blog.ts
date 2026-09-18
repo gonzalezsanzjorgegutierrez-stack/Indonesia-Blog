@@ -69,6 +69,7 @@ export interface TripStats {
   islandsVisited: number;
   photosShared: number;
   kmTravelled: number;
+  startLocation?: string;
   currentLocation: string;
   nextStop: string;
   blogTitle?: string;
