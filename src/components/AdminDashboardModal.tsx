@@ -26,12 +26,14 @@ interface AdminDashboardModalProps {
 
 export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   posts,
+  stories,
   islandPins,
   stats,
   onClose,
   onSavePost,
   onDeletePost,
   onSaveStory,
+  onDeleteStory,
   onSaveIslandPins,
   onSaveStats,
   onRefreshData,
@@ -753,6 +755,43 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                   Añadir al Reel de Historias
                 </button>
               </form>
+            )}
+
+            {/* Story List Manager - shown alongside the story uploader */}
+            {activeTab === 'stories' && (
+              <div className="space-y-4 glass-card p-6 rounded-3xl border border-white/10">
+                <h3 className="font-serif-title text-xl font-bold text-white">Historias Actuales ({stories.length})</h3>
+
+                {stories.length === 0 ? (
+                  <p className="text-sm text-emerald-300/60">No hay historias todavía. Sube la primera arriba.</p>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                    {stories.map((story) => (
+                      <div key={story.id} className="glass-panel p-3 rounded-2xl border border-white/10 space-y-2">
+                        <div className="relative h-24 w-full rounded-xl overflow-hidden">
+                          <img src={story.mediaUrl} alt={story.title} className="h-full w-full object-cover" />
+                        </div>
+                        <div>
+                          <h4 className="font-bold text-xs text-white truncate">{story.title}</h4>
+                          <p className="text-[10px] text-emerald-300/60">{story.location}</p>
+                        </div>
+                        <button
+                          onClick={() => {
+                            if (confirm(`¿Eliminar la historia "${story.title}"?`)) {
+                              onDeleteStory(story.id);
+                              showNotice('Historia eliminada');
+                            }
+                          }}
+                          className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-rose-600/30 text-rose-200 hover:bg-rose-600/50 text-xs font-semibold transition-colors"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          <span>Eliminar</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
 
             {/* Tab 3: POSTS LIST MANAGER */}
