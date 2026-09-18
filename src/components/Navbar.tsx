@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Compass, MapPin, BookOpen, Film, Lock, Bell, Sparkles, Lightbulb } from 'lucide-react';
+import { Compass, MapPin, BookOpen, Film, Lock, Sparkles, Lightbulb } from 'lucide-react';
 import type { TripStats } from '../types/blog';
 
 interface NavbarProps {
@@ -7,7 +7,6 @@ interface NavbarProps {
   activeSection: string;
   setActiveSection: (section: string) => void;
   onOpenAdmin: () => void;
-  onOpenSubscribe: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -15,7 +14,6 @@ export const Navbar: React.FC<NavbarProps> = ({
   activeSection,
   setActiveSection,
   onOpenAdmin,
-  onOpenSubscribe,
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -117,16 +115,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span>Día <strong className="text-white">{stats.currentDay}</strong> de {stats.totalDays}</span>
           </div>
 
-          {/* Subscribe Notifications Button */}
-          <button
-            onClick={onOpenSubscribe}
-            className="hidden sm:flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-emerald-800/50 hover:bg-emerald-700/60 text-emerald-100 border border-emerald-500/30 transition-all hover:scale-105"
-            title="Recibir avisos de nuevos posts"
-          >
-            <Bell className="h-3.5 w-3.5 text-[#E07A5F]" />
-            <span>Avisarme</span>
-          </button>
-
           {/* Secret Admin Button for Couple */}
           <button
             onClick={onOpenAdmin}
@@ -183,13 +171,6 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <Lightbulb className="h-4 w-4 text-[#E9C46A]" />
             <span>Consejos Prácticos</span>
-          </button>
-          <button
-            onClick={() => { onOpenSubscribe(); setMobileMenuOpen(false); }}
-            className="w-full flex items-center space-x-2 px-3 py-2 rounded-lg text-sm text-emerald-100 hover:bg-white/10"
-          >
-            <Bell className="h-4 w-4 text-[#E07A5F]" />
-            <span>Avisarme cuando haya nuevos posts</span>
           </button>
         </div>
       )}

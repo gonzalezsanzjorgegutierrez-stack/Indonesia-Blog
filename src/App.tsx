@@ -14,7 +14,6 @@ import { IndonesiaMap } from './components/IndonesiaMap';
 import { PostCard } from './components/PostCard';
 import { PostDetailModal } from './components/PostDetailModal';
 import { StoryViewerModal } from './components/StoryViewerModal';
-import { SubscribeModal } from './components/SubscribeModal';
 import { AdminDashboardModal } from './components/AdminDashboardModal';
 import { TipsSection } from './components/TipsSection';
 import { Compass, Search, BookOpen } from 'lucide-react';
@@ -34,7 +33,6 @@ export default function App() {
   // Modals state
   const [detailPost, setDetailPost] = useState<Post | null>(null);
   const [activeStory, setActiveStory] = useState<Story | null>(null);
-  const [showSubscribeModal, setShowSubscribeModal] = useState<boolean>(false);
   const [showAdminModal, setShowAdminModal] = useState<boolean>(false);
 
   // Sync state to localstorage
@@ -152,7 +150,6 @@ export default function App() {
         activeSection={activeSection}
         setActiveSection={setActiveSection}
         onOpenAdmin={() => setShowAdminModal(true)}
-        onOpenSubscribe={() => setShowSubscribeModal(true)}
       />
 
       {/* Main Container */}
@@ -298,9 +295,6 @@ export default function App() {
           </div>
 
           <div className="flex items-center space-x-6">
-            <button onClick={() => setShowSubscribeModal(true)} className="hover:text-white transition-colors">
-              Avisos por WhatsApp
-            </button>
             <button onClick={() => setActiveSection('mapa')} className="hover:text-white transition-colors">
               Mapa de Ruta
             </button>
@@ -338,11 +332,6 @@ export default function App() {
           onClose={() => setActiveStory(null)}
           onSelectStory={(story) => setActiveStory(story)}
         />
-      )}
-
-      {/* 3. Subscribe Notifications Modal */}
-      {showSubscribeModal && (
-        <SubscribeModal onClose={() => setShowSubscribeModal(false)} />
       )}
 
       {/* 4. Admin Dashboard Modal */}
