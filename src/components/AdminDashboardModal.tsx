@@ -82,6 +82,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const [editIslandsVisited, setEditIslandsVisited] = useState(stats.islandsVisited);
   const [editPhotosShared, setEditPhotosShared] = useState(stats.photosShared);
   const [editKmTravelled, setEditKmTravelled] = useState(stats.kmTravelled);
+  const [kmToAdd, setKmToAdd] = useState('');
   const [editStartLocation, setEditStartLocation] = useState(stats.startLocation || '');
   const [editCurrentLocation, setEditCurrentLocation] = useState(stats.currentLocation);
   const [editNextStop, setEditNextStop] = useState(stats.nextStop);
@@ -226,6 +227,16 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     showNotice('Ajustes y estadísticas actualizados');
   };
 
+  const handleAddKm = () => {
+    const kmValue = Number(kmToAdd);
+    if (!kmValue || kmValue <= 0) return;
+
+    const newTotal = Number(editKmTravelled) + kmValue;
+    setEditKmTravelled(newTotal);
+    onSaveStats({ ...stats, kmTravelled: newTotal });
+    showNotice(`+${kmValue} km añadidos. Total: ${newTotal} km`);
+    setKmToAdd('');
+  };
 
   // --- MAP PIN CRUD HANDLERS ---
   const handleSaveMapPin = (e: React.FormEvent) => {
@@ -1013,6 +1024,33 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                     )}
                   </div>
 
+                  {/* Km accumulator: add today's/leg's km instead of recalculating the total by hand */}
+                  <div className="p-4 rounded-2xl bg-[#2A9D8F]/10 border border-[#2A9D8F]/30 space-y-3">
+                    <label className="flex items-center gap-2 text-xs font-bold text-[#2A9D8F]">
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      Sumar Km de esta Etapa (se añaden al total automáticamente)
+                    </label>
+                    <div className="flex gap-3">
+                      <input
+                        type="number"
+                        placeholder="Ej: 45"
+                        value={kmToAdd}
+                        onChange={(e) => setKmToAdd(e.target.value)}
+                        className="flex-1 px-4 py-2 rounded-xl bg-black/50 border border-white/15 text-white text-sm"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddKm}
+                        className="px-5 py-2 rounded-xl bg-[#2A9D8F] text-white font-bold text-sm hover:brightness-110 transition-all whitespace-nowrap"
+                      >
+                        + Sumar
+                      </button>
+                    </div>
+                    <p className="text-xs text-emerald-200/70">
+                      Total actual: <strong className="text-white">{editKmTravelled} km</strong>. Escribe los km de hoy y pulsa "Sumar" — se guarda al instante, sin necesidad de rellenar el resto del formulario.
+                    </p>
+                  </div>
+
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                     <div>
                       <label className="block text-xs font-medium text-emerald-200 mb-1">
@@ -1045,7 +1083,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-emerald-200 mb-1">Km Recorridos</label>
+                      <label className="block text-xs font-medium text-emerald-200 mb-1">Km Recorridos (total)</label>
                       <input
                         type="number"
                         value={editKmTravelled}
