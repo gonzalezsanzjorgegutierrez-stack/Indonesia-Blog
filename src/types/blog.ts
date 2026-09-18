@@ -65,6 +65,7 @@ export interface Tip {
 export interface TripStats {
   totalDays: number;
   currentDay: number;
+  tripStartDate?: string; // ISO date (YYYY-MM-DD) - when set, currentDay is calculated automatically
   islandsVisited: number;
   photosShared: number;
   kmTravelled: number;

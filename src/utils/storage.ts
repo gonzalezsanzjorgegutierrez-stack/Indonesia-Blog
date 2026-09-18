@@ -1,5 +1,6 @@
 import type { Post, Story, IslandPin, TripStats } from '../types/blog';
 import { initialPosts, initialStories, initialIslandPins, initialStats } from '../data/initialData';
+import { calculateCurrentDay } from './dateUtils';
 
 const KEYS = {
   POSTS: 'nusa_odyssey_posts',
@@ -56,7 +57,14 @@ export const saveIslandPins = (pins: IslandPin[]): void => {
 export const getStoredStats = (): TripStats => {
   try {
     const stored = localStorage.getItem(KEYS.STATS);
-    return stored ? JSON.parse(stored) : initialStats;
+    const stats: TripStats = stored ? JSON.parse(stored) : initialStats;
+
+    // If a trip start date is set, always recalculate currentDay from real time
+    if (stats.tripStartDate) {
+      stats.currentDay = calculateCurrentDay(stats.tripStartDate);
+    }
+
+    return stats;
   } catch (e) {
     return initialStats;
   }

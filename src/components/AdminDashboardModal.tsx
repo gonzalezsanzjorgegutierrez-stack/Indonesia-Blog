@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { exportAllBlogData, resetToDemoData, getAdminPin } from '../utils/storage';
 import { uploadImageToImgBB, formatImageUrl } from '../utils/media';
+import { calculateCurrentDay } from '../utils/dateUtils';
 
 interface AdminDashboardModalProps {
   posts: Post[];
@@ -77,6 +78,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
   // Stats & Settings Form State
   const [editCurrentDay, setEditCurrentDay] = useState(stats.currentDay);
+  const [editTripStartDate, setEditTripStartDate] = useState(stats.tripStartDate || '');
   const [editIslandsVisited, setEditIslandsVisited] = useState(stats.islandsVisited);
   const [editPhotosShared, setEditPhotosShared] = useState(stats.photosShared);
   const [editKmTravelled, setEditKmTravelled] = useState(stats.kmTravelled);
@@ -208,7 +210,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     e.preventDefault();
     const updatedStats: TripStats = {
       ...stats,
-      currentDay: Number(editCurrentDay),
+      currentDay: editTripStartDate ? calculateCurrentDay(editTripStartDate) : Number(editCurrentDay),
+      tripStartDate: editTripStartDate || undefined,
       islandsVisited: Number(editIslandsVisited),
       photosShared: Number(editPhotosShared),
       kmTravelled: Number(editKmTravelled),
@@ -989,14 +992,36 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                     </div>
                   </div>
 
+                  {/* Auto-updating day counter based on trip start date */}
+                  <div className="p-4 rounded-2xl bg-[#E9C46A]/10 border border-[#E9C46A]/30 space-y-3">
+                    <label className="flex items-center gap-2 text-xs font-bold text-[#E9C46A]">
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      Fecha de Inicio del Viaje (el día se actualiza solo cada día)
+                    </label>
+                    <input
+                      type="date"
+                      value={editTripStartDate}
+                      onChange={(e) => setEditTripStartDate(e.target.value)}
+                      className="w-full px-4 py-2 rounded-xl bg-black/50 border border-white/15 text-white text-sm"
+                    />
+                    {editTripStartDate && (
+                      <p className="text-xs text-emerald-200/70">
+                        Hoy es el <strong className="text-white">Día {calculateCurrentDay(editTripStartDate)}</strong> de {stats.totalDays}. Este número se recalculará automáticamente cada día, no hace falta tocarlo más.
+                      </p>
+                    )}
+                  </div>
+
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                     <div>
-                      <label className="block text-xs font-medium text-emerald-200 mb-1">Día Actual</label>
+                      <label className="block text-xs font-medium text-emerald-200 mb-1">
+                        Día Actual {editTripStartDate && <span className="text-[#E9C46A]">(automático)</span>}
+                      </label>
                       <input
                         type="number"
-                        value={editCurrentDay}
+                        value={editTripStartDate ? calculateCurrentDay(editTripStartDate) : editCurrentDay}
                         onChange={(e) => setEditCurrentDay(Number(e.target.value))}
-                        className="w-full px-4 py-2 rounded-xl bg-black/50 border border-white/15 text-white text-sm"
+                        disabled={!!editTripStartDate}
+                        className="w-full px-4 py-2 rounded-xl bg-black/50 border border-white/15 text-white text-sm disabled:opacity-60 disabled:cursor-not-allowed"
                       />
                     </div>
                     <div>
