@@ -7,7 +7,7 @@ import {
   Film, Settings, Download, RefreshCw, CheckCircle2
 } from 'lucide-react';
 import { exportAllBlogData, readLocalBlogData } from '../utils/storage';
-import { uploadImageToImgBB, formatImageUrl } from '../utils/media';
+import { uploadMedia, formatImageUrl, MAX_VIDEO_MB } from '../utils/media';
 import { calculateCurrentDay } from '../utils/dateUtils';
 
 interface AdminDashboardModalProps {
@@ -52,6 +52,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const [pinError, setPinError] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadPercent, setUploadPercent] = useState(0);
 
   const [activeTab, setActiveTab] = useState<'posts' | 'stories' | 'manage_posts' | 'map' | 'stats'>('posts');
 
@@ -118,8 +119,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     setPinError({
       wrong: 'Contraseña incorrecta. Inténtalo de nuevo.',
       blocked: 'Demasiados intentos. Espera un rato antes de volver a probar.',
-      weak: 'La contraseña configurada en Vercel (ADMIN_PIN) es demasiado corta: usa al menos 10 caracteres.',
-      error: 'No se pudo comprobar la contraseña. Revisa la conexión (o que ADMIN_PIN esté configurado en Vercel).',
+      error: 'No se pudo entrar ahora mismo. Revisa la conexión y, si sigue igual, la configuración de ADMIN_PIN en Vercel.',
     }[result]);
   };
 
@@ -142,26 +142,47 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     setTimeout(() => setNotification(null), 3000);
   };
 
-  // Image File Uploader to ImgBB Handler
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, target: 'cover' | 'gallery' | 'story') => {
-    const files = e.target.files;
+  // Sube fotos y vídeos a Cloudinary (directo desde el navegador, con una firma del servidor)
+  const handleFileUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    target: 'cover' | 'gallery' | 'story' | 'postVideo'
+  ) => {
+    const input = e.target;
+    const files = input.files;
     if (!files || files.length === 0) return;
 
+    // Portada y galería: solo fotos · vídeo del post: solo vídeo · historias: ambos
+    const expected = target === 'postVideo' ? 'video' : target === 'story' ? null : 'image';
+
     setIsUploading(true);
-    showNotice('Subiendo foto a ImgBB...');
+    setUploadPercent(0);
 
     try {
       for (const file of Array.from(files)) {
-        const url = await uploadImageToImgBB(file, pinInput);
+        if (expected && !file.type.startsWith(`${expected}/`)) {
+          throw new Error(
+            expected === 'video'
+              ? 'Aquí solo se pueden subir vídeos.'
+              : 'Aquí solo se pueden subir fotos. Los vídeos van en el campo "Vídeo" o en las Historias.'
+          );
+        }
+        const { url, kind } = await uploadMedia(file, pinInput, (fraction) =>
+          setUploadPercent(Math.round(fraction * 100))
+        );
         if (target === 'cover') setPostCoverImage(url);
-        if (target === 'story') setStoryMediaUrl(url);
+        if (target === 'postVideo') setPostVideoUrl(url);
+        if (target === 'story') {
+          setStoryMediaUrl(url);
+          setStoryType(kind);
+        }
         if (target === 'gallery') setPostGalleryImages((prev) => [...prev, url]);
       }
-      showNotice('¡Foto subida con éxito!');
+      showNotice('¡Subido con éxito!');
     } catch (error) {
-      alert('Error subiendo la imagen: ' + (error instanceof Error ? error.message : error));
+      alert('Error al subir: ' + (error instanceof Error ? error.message : error));
     } finally {
       setIsUploading(false);
+      input.value = ''; // permite volver a elegir el mismo archivo
     }
   };
 
@@ -610,14 +631,21 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-emerald-200 mb-1">Vídeo URL (opcional)</label>
+                    <label className="block text-xs font-medium text-emerald-200 mb-1">Vídeo (opcional)</label>
                     <input
                       type="url"
-                      placeholder="https://..."
+                      placeholder="https://... o sube un vídeo"
                       value={postVideoUrl}
                       onChange={(e) => setPostVideoUrl(e.target.value)}
                       className="w-full px-4 py-2.5 rounded-xl bg-black/50 border border-white/15 text-white text-sm focus:outline-none focus:border-[#E07A5F]"
                     />
+                    <label className={`mt-2 w-full px-3 py-2 rounded-xl text-white font-medium text-xs cursor-pointer flex items-center justify-center gap-2 border ${
+                      isUploading ? 'bg-emerald-800/30 border-emerald-500/10 cursor-wait' : 'bg-emerald-800/60 hover:bg-emerald-700 border-emerald-500/30'
+                    }`}>
+                      <Upload className={`h-4 w-4 ${isUploading ? 'animate-pulse' : ''}`} />
+                      <span>{isUploading ? `Subiendo ${uploadPercent}%` : `Subir vídeo (máx. ${MAX_VIDEO_MB} MB)`}</span>
+                      <input type="file" accept="video/*" className="hidden" disabled={isUploading} onChange={(e) => handleFileUpload(e, 'postVideo')} />
+                    </label>
                   </div>
                 </div>
 
@@ -638,7 +666,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                       isUploading ? 'bg-emerald-800/30 border-emerald-500/10 cursor-wait' : 'bg-emerald-800/60 hover:bg-emerald-700 border-emerald-500/30'
                     }`}>
                       <Upload className={`h-4 w-4 ${isUploading ? 'animate-pulse' : ''}`} />
-                      <span>{isUploading ? 'Subiendo...' : 'Subir foto local'}</span>
+                      <span>{isUploading ? `Subiendo ${uploadPercent}%` : 'Subir foto local'}</span>
                       <input type="file" accept="image/*" className="hidden" disabled={isUploading} onChange={(e) => handleFileUpload(e, 'cover')} />
                     </label>
                   </div>
@@ -776,10 +804,13 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                       isUploading ? 'bg-emerald-800/50 cursor-wait' : 'bg-emerald-800 hover:bg-emerald-700'
                     }`}>
                       <Upload className={`h-4 w-4 ${isUploading ? 'animate-pulse' : ''}`} />
-                      <span>{isUploading ? 'Subiendo...' : 'Subir archivo'}</span>
+                      <span>{isUploading ? `Subiendo ${uploadPercent}%` : 'Subir foto o vídeo'}</span>
                       <input type="file" accept="image/*,video/*" className="hidden" disabled={isUploading} onChange={(e) => handleFileUpload(e, 'story')} />
                     </label>
                   </div>
+                  <p className="text-[11px] text-emerald-300/60">
+                    Vídeos: máximo {MAX_VIDEO_MB} MB (unos 30-40 s). Para uno más largo, pega un enlace en el campo de arriba.
+                  </p>
                 </div>
 
                 <button

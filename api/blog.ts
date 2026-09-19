@@ -1,4 +1,4 @@
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 
 /**
  * Backend del blog (Vercel Function). Guarda los datos compartidos en Redis (Upstash).
@@ -6,7 +6,9 @@ import { timingSafeEqual } from 'node:crypto';
  * Variables de entorno (Vercel → Settings → Environment Variables):
  *   KV_REST_API_URL, KV_REST_API_TOKEN  → las crea la integración de Upstash
  *   ADMIN_PIN                           → PIN de la pareja (nunca va en el código)
- *   IMGBB_API_KEY                       → clave de ImgBB para subir fotos
+ *   CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET
+ *                                       → fotos y vídeos (el navegador sube directo a Cloudinary
+ *                                         con una firma que genera este servidor)
  */
 
 interface Req {
@@ -23,7 +25,7 @@ interface Res {
 
 type Cmd = (string | number)[];
 type Item = { id: string; [key: string]: unknown };
-type Auth = 'ok' | 'wrong' | 'blocked' | 'noconfig' | 'weak';
+type Auth = 'ok' | 'wrong' | 'blocked' | 'noconfig';
 
 const KEYS = {
   posts: 'blog:posts',
@@ -39,7 +41,7 @@ const commentsKey = (postId: string) => `blog:comments:${postId}`;
 
 const ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
 const MAX_JSON_CHARS = 900_000;
-const MAX_IMAGE_CHARS = 4_300_000;
+const UPLOAD_FOLDER = 'nusa-odyssey';
 const MAX_COMMENTS_PER_POST = 200;
 // La contraseña de la pareja debe ser larga: un PIN corto se adivina por fuerza bruta
 const MIN_SECRET_LENGTH = 10;
@@ -94,14 +96,19 @@ function safeEqual(a: string, b: string): boolean {
 
 /**
  * Comprueba la contraseña de la pareja.
- * - Se exige un mínimo de 10 caracteres en ADMIN_PIN (si no, no deja entrar a nadie).
+ * - Se exige un mínimo de 10 caracteres en ADMIN_PIN. Si no se cumple no deja entrar a
+ *   nadie y responde igual que si faltara la variable: el motivo solo se apunta en los
+ *   registros de Vercel, para no decirle a un atacante que la contraseña es corta.
  * - 5 fallos desde una IP la bloquean, incluso con la contraseña correcta, y el
  *   bloqueo se duplica en cada reincidencia: 15 min, 30 min, 1 h ... hasta 24 h.
  */
 async function authenticate(pin: unknown, ip: string): Promise<Auth> {
   const expected = process.env.ADMIN_PIN;
   if (!expected) return 'noconfig';
-  if (expected.length < MIN_SECRET_LENGTH) return 'weak';
+  if (expected.length < MIN_SECRET_LENGTH) {
+    console.error(`ADMIN_PIN demasiado corta: usa al menos ${MIN_SECRET_LENGTH} caracteres. Acceso de administración desactivado.`);
+    return 'noconfig';
+  }
 
   const lockKey = `rl:pinlock:${ip}`;
   const failKey = `rl:pin:${ip}`;
@@ -129,8 +136,7 @@ function denyAuth(res: Res, auth: Exclude<Auth, 'ok'>): void {
   const table = {
     wrong: [401, 'Contraseña incorrecta'],
     blocked: [429, 'Demasiados intentos. Espera un rato antes de volver a probar.'],
-    noconfig: [500, 'Falta configurar ADMIN_PIN en Vercel'],
-    weak: [422, `ADMIN_PIN es demasiado corta: usa al menos ${MIN_SECRET_LENGTH} caracteres`],
+    noconfig: [500, 'Acceso de administración no disponible. Revisa ADMIN_PIN en Vercel.'],
   } as const;
   const [status, error] = table[auth];
   res.status(status).json({ error, code: auth });
@@ -370,31 +376,23 @@ export default async function handler(req: Req, res: Res) {
         return;
       }
 
-      case 'upload': {
+      // El navegador sube la foto/vídeo directamente a Cloudinary (sin pasar por aquí, que
+      // limita las peticiones a 4,5 MB). Este servidor solo firma el permiso de subida.
+      case 'signUpload': {
         if (!(await requireAdmin(req, res, ip))) return;
-        const { image } = body;
-        if (typeof image !== 'string' || image.length < 100 || image.length > MAX_IMAGE_CHARS) {
-          res.status(400).json({ error: 'Imagen no válida o demasiado grande' });
+        const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+        const apiKey = process.env.CLOUDINARY_API_KEY;
+        const apiSecret = process.env.CLOUDINARY_API_SECRET;
+        if (!cloudName || !apiKey || !apiSecret) {
+          res.status(500).json({ error: 'Falta configurar CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY y CLOUDINARY_API_SECRET en Vercel' });
           return;
         }
-        const apiKey = process.env.IMGBB_API_KEY;
-        if (!apiKey) {
-          res.status(500).json({ error: 'Falta configurar IMGBB_API_KEY en Vercel' });
-          return;
-        }
-        const upstream = await fetch(`https://api.imgbb.com/1/upload?key=${encodeURIComponent(apiKey)}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({ image }),
-        });
-        const data = (await upstream.json().catch(() => null)) as
-          | { success?: boolean; data?: { url?: string }; error?: { message?: string } }
-          | null;
-        if (data?.success && data.data?.url) {
-          res.status(200).json({ ok: true, url: data.data.url });
-        } else {
-          res.status(502).json({ error: data?.error?.message ?? 'ImgBB no pudo procesar la imagen' });
-        }
+        const timestamp = Math.floor(Date.now() / 1000);
+        // Firma de Cloudinary: parámetros ordenados alfabéticamente + secreto, en SHA-1
+        const signature = createHash('sha1')
+          .update(`folder=${UPLOAD_FOLDER}&timestamp=${timestamp}${apiSecret}`)
+          .digest('hex');
+        res.status(200).json({ ok: true, cloudName, apiKey, timestamp, folder: UPLOAD_FOLDER, signature });
         return;
       }
 

@@ -49,14 +49,13 @@ export async function fetchRemoteData(): Promise<RemoteData | null> {
   }
 }
 
-export type LoginResult = 'ok' | 'wrong' | 'blocked' | 'weak' | 'error';
+export type LoginResult = 'ok' | 'wrong' | 'blocked' | 'error';
 
 export async function verifyPin(pin: string): Promise<LoginResult> {
   const result = await call<{ ok: true }>({ action: 'verify', pin });
   if (result.ok) return 'ok';
   if (result.status === 401) return 'wrong';
   if (result.status === 429) return 'blocked';
-  if (result.status === 422) return 'weak';
   return 'error';
 }
 
@@ -78,5 +77,13 @@ export const addComment = (postId: string, authorName: string, text: string) =>
 export const deleteComment = (postId: string, commentId: string, pin: string) =>
   call<{ ok: true }>({ action: 'deleteComment', postId, commentId }, pin);
 
-export const uploadImage = (image: string, pin: string) =>
-  call<{ url: string }>({ action: 'upload', image }, pin);
+export interface UploadSignature {
+  cloudName: string;
+  apiKey: string;
+  timestamp: number;
+  folder: string;
+  signature: string;
+}
+
+export const signUpload = (pin: string) =>
+  call<UploadSignature>({ action: 'signUpload' }, pin);
