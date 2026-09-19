@@ -16,12 +16,13 @@ interface AdminDashboardModalProps {
   islandPins: IslandPin[];
   stats: TripStats;
   onClose: () => void;
-  onSavePost: (post: Post) => void;
-  onDeletePost: (postId: string) => void;
-  onSaveStories: (stories: Story[]) => void;
-  onDeleteStory: (storyId: string) => void;
-  onSaveIslandPins: (pins: IslandPin[]) => void;
-  onSaveStats: (stats: TripStats) => void;
+  // Todas devuelven `true` solo si el servidor ha guardado el cambio de verdad
+  onSavePost: (post: Post) => Promise<boolean>;
+  onDeletePost: (postId: string) => Promise<boolean>;
+  onSaveStories: (stories: Story[]) => Promise<boolean>;
+  onDeleteStory: (storyId: string) => Promise<boolean>;
+  onSaveIslandPins: (pins: IslandPin[]) => Promise<boolean>;
+  onSaveStats: (stats: TripStats) => Promise<boolean>;
   likesMap: Record<string, number>;
   commentsMap: Record<string, Comment[]>;
   onDeleteComment: (postId: string, commentId: string) => void;
@@ -52,6 +53,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const [pinError, setPinError] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({ index: 0, total: 0, percent: 0 });
   const uploadLabel =
     uploadProgress.total > 1
@@ -147,6 +149,18 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     setTimeout(() => setNotification(null), 3000);
   };
 
+  // Ejecuta un guardado sin permitir dobles pulsaciones (que crearían el post dos veces).
+  // Devuelve `true` solo si el servidor lo ha guardado de verdad.
+  const withSaving = async (job: () => Promise<boolean>): Promise<boolean> => {
+    if (isSaving) return false;
+    setIsSaving(true);
+    try {
+      return await job();
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   // Sube fotos y vídeos a Cloudinary (directo desde el navegador, con una firma del servidor)
   const handleFileUpload = async (
     e: React.ChangeEvent<HTMLInputElement>,
@@ -203,7 +217,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     setStoryLink('');
   };
 
-  const handleSavePostForm = (e: React.FormEvent) => {
+  const handleSavePostForm = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!postTitle.trim() || !postContent.trim()) return;
 
@@ -229,7 +243,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       isFeatured: true,
     };
 
-    onSavePost(newPost);
+    // El formulario solo se vacía si el servidor lo ha guardado: si falla, lo escrito no se pierde
+    if (!(await withSaving(() => onSavePost(newPost)))) return;
     showNotice(editingPostId ? 'Post actualizado con éxito' : '¡Nuevo post publicado!');
     resetPostForm();
   };
@@ -261,7 +276,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     setPostVideoUrl('');
   };
 
-  const handleSaveStoryForm = (e: React.FormEvent) => {
+  const handleSaveStoryForm = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!storyTitle.trim() || storyItems.length === 0) return;
 
@@ -277,13 +292,13 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       likes: 1,
     }));
 
-    onSaveStories(newStories);
+    if (!(await withSaving(() => onSaveStories(newStories)))) return;
     showNotice(newStories.length === 1 ? '¡Historia subida al reel!' : `¡${newStories.length} historias subidas al reel!`);
     setStoryTitle('');
     setStoryItems([]);
   };
 
-  const handleSaveStatsForm = (e: React.FormEvent) => {
+  const handleSaveStatsForm = async (e: React.FormEvent) => {
     e.preventDefault();
     const updatedStats: TripStats = {
       ...stats,
@@ -298,23 +313,23 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       blogTitle: editBlogTitle,
       authorName: editAuthorName,
     };
-    onSaveStats(updatedStats);
+    if (!(await withSaving(() => onSaveStats(updatedStats)))) return;
     showNotice('Ajustes y estadísticas actualizados');
   };
 
-  const handleAddKm = () => {
+  const handleAddKm = async () => {
     const kmValue = Number(kmToAdd);
     if (!kmValue || kmValue <= 0) return;
 
     const newTotal = Number(editKmTravelled) + kmValue;
+    if (!(await withSaving(() => onSaveStats({ ...stats, kmTravelled: newTotal })))) return;
     setEditKmTravelled(newTotal);
-    onSaveStats({ ...stats, kmTravelled: newTotal });
     showNotice(`+${kmValue} km añadidos. Total: ${newTotal} km`);
     setKmToAdd('');
   };
 
   // --- MAP PIN CRUD HANDLERS ---
-  const handleSaveMapPin = (e: React.FormEvent) => {
+  const handleSaveMapPin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!mapPinName.trim() || !mapPinIsland.trim()) return;
 
@@ -337,7 +352,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       newPins = [...islandPins, newPin];
     }
     
-    onSaveIslandPins(newPins);
+    if (!(await withSaving(() => onSaveIslandPins(newPins)))) return;
     showNotice(editingMapPinId ? 'Parada actualizada' : 'Nueva parada añadida a la ruta');
     resetMapPinForm();
   };
@@ -354,11 +369,10 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     setActiveTab('map');
   };
 
-  const handleDeleteMapPin = (pinId: string) => {
+  const handleDeleteMapPin = async (pinId: string) => {
     if (confirm('¿Eliminar esta parada de la ruta?')) {
       const newPins = islandPins.filter(p => p.id !== pinId);
-      onSaveIslandPins(newPins);
-      showNotice('Parada eliminada');
+      if (await withSaving(() => onSaveIslandPins(newPins))) showNotice('Parada eliminada');
     }
   };
 
@@ -751,10 +765,11 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
                 <button
                   type="submit"
-                  className="w-full py-4 rounded-2xl bg-gradient-to-r from-[#E07A5F] to-[#E76F51] text-white font-bold text-base shadow-xl hover:scale-[1.01] transition-all flex items-center justify-center space-x-2"
+                  disabled={isSaving || isUploading}
+                  className="w-full py-4 rounded-2xl bg-gradient-to-r from-[#E07A5F] to-[#E76F51] text-white font-bold text-base shadow-xl hover:scale-[1.01] transition-all flex items-center justify-center space-x-2 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   <Save className="h-5 w-5" />
-                  <span>{editingPostId ? 'Guardar Cambios del Post' : 'Publicar Nuevo Día en el Diario'}</span>
+                  <span>{isSaving ? 'Guardando…' : editingPostId ? 'Guardar Cambios del Post' : 'Publicar Nuevo Día en el Diario'}</span>
                 </button>
               </form>
             )}
@@ -860,10 +875,10 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
                 <button
                   type="submit"
-                  disabled={isUploading || storyItems.length === 0}
+                  disabled={isSaving || isUploading || storyItems.length === 0}
                   className="w-full py-3.5 rounded-2xl bg-[#2A9D8F] text-white font-bold text-sm shadow-lg hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {storyItems.length > 1 ? `Añadir ${storyItems.length} historias al Reel` : 'Añadir al Reel de Historias'}
+                  {isSaving ? 'Guardando…' : storyItems.length > 1 ? `Añadir ${storyItems.length} historias al Reel` : 'Añadir al Reel de Historias'}
                 </button>
               </form>
             )}
@@ -887,10 +902,9 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                           <p className="text-[10px] text-emerald-300/60">{story.location}</p>
                         </div>
                         <button
-                          onClick={() => {
+                          onClick={async () => {
                             if (confirm(`¿Eliminar la historia "${story.title}"?`)) {
-                              onDeleteStory(story.id);
-                              showNotice('Historia eliminada');
+                              if (await withSaving(() => onDeleteStory(story.id))) showNotice('Historia eliminada');
                             }
                           }}
                           className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-rose-600/30 text-rose-200 hover:bg-rose-600/50 text-xs font-semibold transition-colors"
@@ -931,9 +945,9 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                           <Edit className="h-4 w-4" />
                         </button>
                         <button
-                          onClick={() => {
-                            onDeletePost(post.id);
-                            showNotice('Post eliminado');
+                          onClick={async () => {
+                            if (!confirm(`¿Eliminar el post "${post.title}"? No se puede deshacer.`)) return;
+                            if (await withSaving(() => onDeletePost(post.id))) showNotice('Post eliminado');
                           }}
                           className="p-2 rounded-xl bg-rose-600/30 text-rose-200 hover:bg-rose-600/50"
                           title="Eliminar"
@@ -1301,9 +1315,10 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
                   <button
                     type="submit"
-                    className="w-full py-3 rounded-2xl bg-[#E9C46A] text-slate-950 font-bold text-sm hover:brightness-110"
+                    disabled={isSaving}
+                    className="w-full py-3 rounded-2xl bg-[#E9C46A] text-slate-950 font-bold text-sm hover:brightness-110 disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    Guardar Estadísticas Actualizadas
+                    {isSaving ? 'Guardando…' : 'Guardar Estadísticas Actualizadas'}
                   </button>
                 </form>
 

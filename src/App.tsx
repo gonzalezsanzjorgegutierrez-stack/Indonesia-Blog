@@ -3,7 +3,7 @@ import { normalizeStats, readLocalBlogData } from './utils/storage';
 import {
   fetchRemoteData, verifyPin, saveData, upsertItem, upsertItems, removeItem,
   likePost, addComment, deleteComment,
-  type RemoteData, type LoginResult,
+  type RemoteData, type LoginResult, type ApiResult,
 } from './utils/api';
 import type { Post, Story, IslandPin, TripStats, Tip, Comment } from './types/blog';
 import { initialTips, initialPosts, initialStories, initialIslandPins, initialStats } from './data/initialData';
@@ -41,11 +41,12 @@ export default function App() {
   const adminPin = useRef('');
 
   // Los datos compartidos viven en el servidor: todos los dispositivos ven lo mismo
+  // Lo que responde el servidor manda siempre; si algo nunca se ha guardado, se ve el estado inicial
   const applyRemote = (data: RemoteData) => {
-    if (data.posts) setPosts(data.posts);
-    if (data.stories) setStories(data.stories);
-    if (data.islandPins) setIslandPins(data.islandPins);
-    if (data.stats) setStats(normalizeStats(data.stats));
+    setPosts(data.posts ?? initialPosts);
+    setStories(data.stories ?? initialStories);
+    setIslandPins(data.islandPins ?? initialIslandPins);
+    setStats(normalizeStats(data.stats ?? initialStats));
     setLikes(data.likes ?? {});
     setComments(data.comments ?? {});
   };
@@ -80,6 +81,19 @@ export default function App() {
 
   const warnSaveFailed = (error: string) => alert(`No se pudo guardar en el servidor: ${error}`);
 
+  // Guarda en el servidor y dice si ha salido bien. Si falla, avisa y vuelve a cargar lo que HAY
+  // guardado de verdad, para que la pantalla nunca enseñe posts o cambios que no existen.
+  const persist = async <T,>(job: Promise<ApiResult<T>>, onSaved?: (data: T) => void): Promise<boolean> => {
+    const result = await job;
+    if (result.ok) {
+      onSaved?.(result.data);
+      return true;
+    }
+    warnSaveFailed(result.error);
+    await refreshData();
+    return false;
+  };
+
   // Like Post (público)
   const handleLikePost = (postId: string) => {
     setLikes((prev) => ({ ...prev, [postId]: (prev[postId] ?? 0) + 1 }));
@@ -111,16 +125,12 @@ export default function App() {
 
   const handleSaveIslandPins = (pins: IslandPin[]) => {
     setIslandPins(pins);
-    saveData('islandPins', pins, adminPin.current).then((r) => {
-      if (!r.ok) warnSaveFailed(r.error);
-    });
+    return persist(saveData('islandPins', pins, adminPin.current));
   };
 
   const handleSaveStats = (newStats: TripStats) => {
     setStats(newStats);
-    saveData('stats', newStats, adminPin.current).then((r) => {
-      if (!r.ok) warnSaveFailed(r.error);
-    });
+    return persist(saveData('stats', newStats, adminPin.current));
   };
 
   // Save / Edit Post
@@ -130,37 +140,25 @@ export default function App() {
         ? prev.map((p) => (p.id === newPost.id ? newPost : p))
         : [newPost, ...prev]
     );
-    upsertItem<Post>('posts', newPost, adminPin.current).then((r) => {
-      if (r.ok) setPosts(r.data.items);
-      else warnSaveFailed(r.error);
-    });
+    return persist(upsertItem<Post>('posts', newPost, adminPin.current), (d) => setPosts(d.items));
   };
 
   // Delete Post
   const handleDeletePost = (postId: string) => {
     setPosts((prev) => prev.filter((p) => p.id !== postId));
-    removeItem<Post>('posts', postId, adminPin.current).then((r) => {
-      if (r.ok) setPosts(r.data.items);
-      else warnSaveFailed(r.error);
-    });
+    return persist(removeItem<Post>('posts', postId, adminPin.current), (d) => setPosts(d.items));
   };
 
   // Save Stories: una historia por cada foto/vídeo, todas en una sola petición
   const handleSaveStories = (newStories: Story[]) => {
     setStories((prev) => [...newStories, ...prev]);
-    upsertItems<Story>('stories', newStories, adminPin.current).then((r) => {
-      if (r.ok) setStories(r.data.items);
-      else warnSaveFailed(r.error);
-    });
+    return persist(upsertItems<Story>('stories', newStories, adminPin.current), (d) => setStories(d.items));
   };
 
   // Delete Story
   const handleDeleteStory = (storyId: string) => {
     setStories((prev) => prev.filter((s) => s.id !== storyId));
-    removeItem<Story>('stories', storyId, adminPin.current).then((r) => {
-      if (r.ok) setStories(r.data.items);
-      else warnSaveFailed(r.error);
-    });
+    return persist(removeItem<Story>('stories', storyId, adminPin.current), (d) => setStories(d.items));
   };
 
   // Moderación: borrar un comentario de un visitante
