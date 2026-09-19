@@ -22,11 +22,9 @@ async function call<T>(body: Record<string, unknown>, pin?: string): Promise<Api
   try {
     const res = await fetch(ENDPOINT, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(pin ? { 'x-admin-pin': pin } : {}),
-      },
-      body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json' },
+      // La contraseña va en el cuerpo (UTF-8), no en una cabecera: ver requireAdmin en api/blog.ts
+      body: JSON.stringify(pin ? { ...body, pin } : body),
     });
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     if (!res.ok) {

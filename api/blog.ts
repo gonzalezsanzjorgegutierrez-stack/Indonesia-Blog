@@ -151,10 +151,13 @@ function denyAuth(res: Res, auth: Exclude<Auth, 'ok'>): void {
   res.status(status).json({ error, code: auth === 'noconfig' ? 'wrong' : auth });
 }
 
-async function requireAdmin(req: Req, res: Res, ip: string): Promise<boolean> {
-  const header = req.headers['x-admin-pin'];
-  const pin = Array.isArray(header) ? header[0] : header;
-  const auth = await authenticate(pin, ip);
+/**
+ * La contraseña va SIEMPRE en el cuerpo JSON (UTF-8), nunca en una cabecera HTTP: las cabeceras
+ * no admiten bien acentos ni eñes, recortan los espacios de los extremos y los intermediarios
+ * pueden alterarlas, así que una frase con "ñ" o "á" entraba en el login pero fallaba al guardar.
+ */
+async function requireAdmin(body: Record<string, unknown>, res: Res, ip: string): Promise<boolean> {
+  const auth = await authenticate(body.pin, ip);
   if (auth === 'ok') return true;
   denyAuth(res, auth);
   return false;
@@ -248,7 +251,7 @@ export default async function handler(req: Req, res: Res) {
       }
 
       case 'save': {
-        if (!(await requireAdmin(req, res, ip))) return;
+        if (!(await requireAdmin(body, res, ip))) return;
         const { key, value } = body;
         if (!isDataKey(key)) {
           res.status(400).json({ error: 'Clave no válida' });
@@ -273,7 +276,7 @@ export default async function handler(req: Req, res: Res) {
       }
 
       case 'upsert': {
-        if (!(await requireAdmin(req, res, ip))) return;
+        if (!(await requireAdmin(body, res, ip))) return;
         const { key } = body;
         // Un elemento (`item`) o varios a la vez (`items`, p. ej. las fotos de una historia)
         const incoming = (Array.isArray(body.items) ? body.items : body.item ? [body.item] : []) as Item[];
@@ -303,7 +306,7 @@ export default async function handler(req: Req, res: Res) {
       }
 
       case 'remove': {
-        if (!(await requireAdmin(req, res, ip))) return;
+        if (!(await requireAdmin(body, res, ip))) return;
         const { key, id } = body;
         if (!isListKey(key) || typeof id !== 'string' || !ID_RE.test(id)) {
           res.status(400).json({ error: 'Datos no válidos' });
@@ -376,7 +379,7 @@ export default async function handler(req: Req, res: Res) {
       }
 
       case 'deleteComment': {
-        if (!(await requireAdmin(req, res, ip))) return;
+        if (!(await requireAdmin(body, res, ip))) return;
         const { postId, commentId } = body;
         if (
           typeof postId !== 'string' || !ID_RE.test(postId) ||
@@ -396,7 +399,7 @@ export default async function handler(req: Req, res: Res) {
       // El navegador sube la foto/vídeo directamente a Cloudinary (sin pasar por aquí, que
       // limita las peticiones a 4,5 MB). Este servidor solo firma el permiso de subida.
       case 'signUpload': {
-        if (!(await requireAdmin(req, res, ip))) return;
+        if (!(await requireAdmin(body, res, ip))) return;
         const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
         const apiKey = process.env.CLOUDINARY_API_KEY;
         const apiSecret = process.env.CLOUDINARY_API_SECRET;
