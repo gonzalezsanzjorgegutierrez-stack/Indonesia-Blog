@@ -1,12 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { normalizeStats, readLocalBlogData } from './utils/storage';
 import {
-  getStoredPosts, savePosts,
-  getStoredStories, saveStories,
-  getStoredIslandPins, saveIslandPins,
-  getStoredStats, saveStats
-} from './utils/storage';
-import type { Post, Story, IslandPin, TripStats, Tip } from './types/blog';
-import { initialTips } from './data/initialData';
+  fetchRemoteData, verifyPin, saveData, upsertItem, removeItem,
+  likePost, addComment, deleteComment,
+  type RemoteData, type LoginResult,
+} from './utils/api';
+import type { Post, Story, IslandPin, TripStats, Tip, Comment } from './types/blog';
+import { initialTips, initialPosts, initialStories, initialIslandPins, initialStats } from './data/initialData';
 import { Navbar } from './components/Navbar';
 import { HeroBanner } from './components/HeroBanner';
 import { StoryBar } from './components/StoryBar';
@@ -19,10 +19,12 @@ import { TipsSection } from './components/TipsSection';
 import { Compass, Search, BookOpen } from 'lucide-react';
 
 export default function App() {
-  const [posts, setPosts] = useState<Post[]>(getStoredPosts);
-  const [stories, setStories] = useState<Story[]>(getStoredStories);
-  const [islandPins, setIslandPins] = useState<IslandPin[]>(getStoredIslandPins);
-  const [stats, setStats] = useState<TripStats>(getStoredStats);
+  const [posts, setPosts] = useState<Post[]>(initialPosts);
+  const [stories, setStories] = useState<Story[]>(initialStories);
+  const [islandPins, setIslandPins] = useState<IslandPin[]>(initialIslandPins);
+  const [stats, setStats] = useState<TripStats>(() => normalizeStats(initialStats));
+  const [likes, setLikes] = useState<Record<string, number>>({});
+  const [comments, setComments] = useState<Record<string, Comment[]>>({});
   const [tips] = useState<Tip[]>(initialTips);
 
   const [activeSection, setActiveSection] = useState<string>('inicio');
@@ -31,101 +33,162 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Modals state
-  const [detailPost, setDetailPost] = useState<Post | null>(null);
+  const [detailPostId, setDetailPostId] = useState<string | null>(null);
   const [activeStory, setActiveStory] = useState<Story | null>(null);
   const [showAdminModal, setShowAdminModal] = useState<boolean>(false);
 
-  // Sync state to localstorage
-  useEffect(() => {
-    savePosts(posts);
-  }, [posts]);
+  // PIN de la pareja: solo vive en memoria mientras la pestaña está abierta
+  const adminPin = useRef('');
 
-  useEffect(() => {
-    saveStories(stories);
-  }, [stories]);
-
-  useEffect(() => {
-    saveIslandPins(islandPins);
-  }, [islandPins]);
-
-  useEffect(() => {
-    saveStats(stats);
-  }, [stats]);
-
-  const refreshData = () => {
-    setPosts(getStoredPosts());
-    setStories(getStoredStories());
-    setIslandPins(getStoredIslandPins());
-    setStats(getStoredStats());
+  // Los datos compartidos viven en el servidor: todos los dispositivos ven lo mismo
+  const applyRemote = (data: RemoteData) => {
+    if (data.posts) setPosts(data.posts);
+    if (data.stories) setStories(data.stories);
+    if (data.islandPins) setIslandPins(data.islandPins);
+    if (data.stats) setStats(normalizeStats(data.stats));
+    setLikes(data.likes ?? {});
+    setComments(data.comments ?? {});
   };
 
-  // Like Post
-  const handleLikePost = (postId: string) => {
-    setPosts((prev) =>
-      prev.map((p) => (p.id === postId ? { ...p, likes: p.likes + 1 } : p))
-    );
-    if (detailPost && detailPost.id === postId) {
-      setDetailPost((prev) => (prev ? { ...prev, likes: prev.likes + 1 } : null));
-    }
+  const refreshData = async () => {
+    const data = await fetchRemoteData();
+    if (data) applyRemote(data);
+    return data !== null;
   };
 
-  // Add Comment
-  const handleAddComment = (postId: string, authorName: string, text: string) => {
-    const newComment = {
-      id: `c-${Date.now()}`,
-      authorName,
-      text,
-      date: 'Hoy',
-      isApproved: true,
+  useEffect(() => {
+    let cancelled = false;
+    fetchRemoteData().then((data) => {
+      if (data && !cancelled) applyRemote(data);
+    });
+    return () => {
+      cancelled = true;
     };
+  }, []);
 
-    setPosts((prev) =>
-      prev.map((p) =>
-        p.id === postId ? { ...p, comments: [newComment, ...p.comments] } : p
-      )
-    );
+  // Posts tal y como los ve el público: contador de likes y comentarios en vivo
+  const postsView = useMemo(
+    () =>
+      posts.map((p) => ({
+        ...p,
+        likes: p.likes + (likes[p.id] ?? 0),
+        comments: [...(comments[p.id] ?? []), ...(p.comments ?? [])],
+      })),
+    [posts, likes, comments]
+  );
+  const detailPost = postsView.find((p) => p.id === detailPostId) ?? null;
 
-    if (detailPost && detailPost.id === postId) {
-      setDetailPost((prev) =>
-        prev ? { ...prev, comments: [newComment, ...prev.comments] } : null
-      );
-    }
+  const warnSaveFailed = (error: string) => alert(`No se pudo guardar en el servidor: ${error}`);
+
+  // Like Post (público)
+  const handleLikePost = (postId: string) => {
+    setLikes((prev) => ({ ...prev, [postId]: (prev[postId] ?? 0) + 1 }));
+    likePost(postId).then((result) => {
+      if (!result.ok) {
+        setLikes((prev) => ({ ...prev, [postId]: Math.max(0, (prev[postId] ?? 0) - 1) }));
+      }
+    });
   };
 
-  // Save Island Pins (From Admin)
+  // Add Comment (público)
+  const handleAddComment = async (postId: string, authorName: string, text: string) => {
+    const result = await addComment(postId, authorName, text);
+    if (!result.ok) {
+      alert(`No se pudo enviar el comentario: ${result.error}`);
+      return;
+    }
+    const { comment } = result.data;
+    setComments((prev) => ({ ...prev, [postId]: [comment, ...(prev[postId] ?? [])] }));
+  };
+
+  // --- Acciones de la pareja (requieren PIN, se validan en el servidor) ---
+
+  const handleAdminLogin = async (pin: string): Promise<LoginResult> => {
+    const result = await verifyPin(pin);
+    if (result === 'ok') adminPin.current = pin;
+    return result;
+  };
+
   const handleSaveIslandPins = (pins: IslandPin[]) => {
     setIslandPins(pins);
-    saveIslandPins(pins);
+    saveData('islandPins', pins, adminPin.current).then((r) => {
+      if (!r.ok) warnSaveFailed(r.error);
+    });
   };
 
-  // Save / Edit Post (From Admin)
+  const handleSaveStats = (newStats: TripStats) => {
+    setStats(newStats);
+    saveData('stats', newStats, adminPin.current).then((r) => {
+      if (!r.ok) warnSaveFailed(r.error);
+    });
+  };
+
+  // Save / Edit Post
   const handleSavePost = (newPost: Post) => {
-    setPosts((prev) => {
-      const exists = prev.some((p) => p.id === newPost.id);
-      if (exists) {
-        return prev.map((p) => (p.id === newPost.id ? newPost : p));
-      }
-      return [newPost, ...prev];
+    setPosts((prev) =>
+      prev.some((p) => p.id === newPost.id)
+        ? prev.map((p) => (p.id === newPost.id ? newPost : p))
+        : [newPost, ...prev]
+    );
+    upsertItem<Post>('posts', newPost, adminPin.current).then((r) => {
+      if (r.ok) setPosts(r.data.items);
+      else warnSaveFailed(r.error);
     });
   };
 
   // Delete Post
   const handleDeletePost = (postId: string) => {
     setPosts((prev) => prev.filter((p) => p.id !== postId));
+    removeItem<Post>('posts', postId, adminPin.current).then((r) => {
+      if (r.ok) setPosts(r.data.items);
+      else warnSaveFailed(r.error);
+    });
   };
 
   // Save Story
   const handleSaveStory = (newStory: Story) => {
     setStories((prev) => [newStory, ...prev]);
+    upsertItem<Story>('stories', newStory, adminPin.current).then((r) => {
+      if (r.ok) setStories(r.data.items);
+      else warnSaveFailed(r.error);
+    });
   };
 
   // Delete Story
   const handleDeleteStory = (storyId: string) => {
     setStories((prev) => prev.filter((s) => s.id !== storyId));
+    removeItem<Story>('stories', storyId, adminPin.current).then((r) => {
+      if (r.ok) setStories(r.data.items);
+      else warnSaveFailed(r.error);
+    });
+  };
+
+  // Moderación: borrar un comentario de un visitante
+  const handleDeleteComment = (postId: string, commentId: string) => {
+    setComments((prev) => ({ ...prev, [postId]: (prev[postId] ?? []).filter((c) => c.id !== commentId) }));
+    deleteComment(postId, commentId, adminPin.current).then((r) => {
+      if (!r.ok) warnSaveFailed(r.error);
+    });
+  };
+
+  // Migración única: sube al servidor lo que se creó en este navegador con la versión antigua
+  const handlePublishLocalData = async (): Promise<boolean> => {
+    const local = readLocalBlogData();
+    const jobs = [];
+    if (local.posts) jobs.push(saveData('posts', local.posts, adminPin.current));
+    if (local.stories) jobs.push(saveData('stories', local.stories, adminPin.current));
+    if (local.islandPins) jobs.push(saveData('islandPins', local.islandPins, adminPin.current));
+    const results = await Promise.all(jobs);
+    const failed = results.find((r) => !r.ok);
+    if (failed && !failed.ok) {
+      warnSaveFailed(failed.error);
+      return false;
+    }
+    return refreshData();
   };
 
   // Filter posts based on search query, island, and category
-  const filteredPosts = posts.filter((post) => {
+  const filteredPosts = postsView.filter((post) => {
     const matchesSearch =
       post.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       post.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -264,7 +327,7 @@ export default function App() {
                 <PostCard
                   key={post.id}
                   post={post}
-                  onOpenDetail={(p) => setDetailPost(p)}
+                  onOpenDetail={(p) => setDetailPostId(p.id)}
                   onLike={handleLikePost}
                 />
               ))}
@@ -318,7 +381,7 @@ export default function App() {
       {detailPost && (
         <PostDetailModal
           post={detailPost}
-          onClose={() => setDetailPost(null)}
+          onClose={() => setDetailPostId(null)}
           onLike={handleLikePost}
           onAddComment={handleAddComment}
         />
@@ -347,8 +410,12 @@ export default function App() {
           onSaveStory={handleSaveStory}
           onDeleteStory={handleDeleteStory}
           onSaveIslandPins={handleSaveIslandPins}
-          onSaveStats={setStats}
-          onRefreshData={refreshData}
+          onSaveStats={handleSaveStats}
+          likesMap={likes}
+          commentsMap={comments}
+          onDeleteComment={handleDeleteComment}
+          onLogin={handleAdminLogin}
+          onPublishLocalData={handlePublishLocalData}
         />
       )}
 

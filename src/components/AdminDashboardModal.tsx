@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import L from 'leaflet';
-import type { Post, Story, IslandPin, TripStats } from '../types/blog';
+import type { Post, Story, IslandPin, TripStats, Comment } from '../types/blog';
+import type { LoginResult } from '../utils/api';
 import { 
   X, Lock, KeyRound, Plus, Edit, Trash2, Save, Upload, MapPin, 
   Film, Settings, Download, RefreshCw, CheckCircle2
 } from 'lucide-react';
-import { exportAllBlogData, resetToDemoData, getAdminPin } from '../utils/storage';
+import { exportAllBlogData, readLocalBlogData } from '../utils/storage';
 import { uploadImageToImgBB, formatImageUrl } from '../utils/media';
 import { calculateCurrentDay } from '../utils/dateUtils';
 
@@ -21,7 +22,11 @@ interface AdminDashboardModalProps {
   onDeleteStory: (storyId: string) => void;
   onSaveIslandPins: (pins: IslandPin[]) => void;
   onSaveStats: (stats: TripStats) => void;
-  onRefreshData: () => void;
+  likesMap: Record<string, number>;
+  commentsMap: Record<string, Comment[]>;
+  onDeleteComment: (postId: string, commentId: string) => void;
+  onLogin: (pin: string) => Promise<LoginResult>;
+  onPublishLocalData: () => Promise<boolean>;
 }
 
 export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
@@ -36,11 +41,16 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   onDeleteStory,
   onSaveIslandPins,
   onSaveStats,
-  onRefreshData,
+  likesMap,
+  commentsMap,
+  onDeleteComment,
+  onLogin,
+  onPublishLocalData,
 }) => {
   const [pinInput, setPinInput] = useState('');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [pinError, setPinError] = useState(false);
+  const [pinError, setPinError] = useState<string | null>(null);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
 
   const [activeTab, setActiveTab] = useState<'posts' | 'stories' | 'manage_posts' | 'map' | 'stats'>('posts');
@@ -94,14 +104,35 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
   const [notification, setNotification] = useState<string | null>(null);
 
-  const handleLogin = (e: React.FormEvent) => {
+  // El PIN se comprueba en el servidor; nunca está escrito en el código
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (pinInput === getAdminPin() || pinInput === '8614') {
+    setIsLoggingIn(true);
+    setPinError(null);
+    const result = await onLogin(pinInput);
+    setIsLoggingIn(false);
+    if (result === 'ok') {
       setIsAuthenticated(true);
-      setPinError(false);
-    } else {
-      setPinError(true);
+      return;
     }
+    setPinError({
+      wrong: 'PIN incorrecto. Inténtalo de nuevo.',
+      blocked: 'Demasiados intentos. Espera unos minutos.',
+      error: 'No se pudo comprobar el PIN. Revisa la conexión (o que ADMIN_PIN esté configurado en Vercel).',
+    }[result]);
+  };
+
+  // Migración única desde la versión antigua que guardaba todo en el navegador
+  const handlePublishLocal = async () => {
+    const local = readLocalBlogData();
+    if (!local.posts && !local.stories && !local.islandPins) {
+      alert('Este navegador no tiene datos guardados de la versión anterior.');
+      return;
+    }
+    const summary = `${local.posts?.length ?? 0} posts, ${local.stories?.length ?? 0} historias, ${local.islandPins?.length ?? 0} paradas de la ruta`;
+    if (!confirm(`Se van a publicar en el servidor los datos guardados en este navegador (${summary}).\n\nEsto SUSTITUYE lo que haya publicado ahora en esas secciones. ¿Continuar?`)) return;
+    const ok = await onPublishLocalData();
+    showNotice(ok ? 'Datos subidos al servidor' : 'No se pudieron subir los datos');
   };
 
 
@@ -120,14 +151,14 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
     try {
       for (const file of Array.from(files)) {
-        const url = await uploadImageToImgBB(file);
+        const url = await uploadImageToImgBB(file, pinInput);
         if (target === 'cover') setPostCoverImage(url);
         if (target === 'story') setStoryMediaUrl(url);
         if (target === 'gallery') setPostGalleryImages((prev) => [...prev, url]);
       }
       showNotice('¡Foto subida con éxito!');
     } catch (error) {
-      alert('Error subiendo la imagen: ' + error);
+      alert('Error subiendo la imagen: ' + (error instanceof Error ? error.message : error));
     } finally {
       setIsUploading(false);
     }
@@ -404,7 +435,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
             <form onSubmit={handleLogin} className="space-y-4">
               <input
                 type="password"
-                maxLength={6}
+                maxLength={12}
                 placeholder="PIN secreto"
                 value={pinInput}
                 onChange={(e) => setPinInput(e.target.value)}
@@ -413,15 +444,16 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
               />
 
               {pinError && (
-                <p className="text-xs text-rose-400 font-medium">PIN incorrecto. Inténtalo de nuevo.</p>
+                <p className="text-xs text-rose-400 font-medium">{pinError}</p>
               )}
 
 
               <button
                 type="submit"
-                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-[#E07A5F] to-[#E76F51] text-white font-bold text-sm shadow-xl hover:scale-105 transition-all"
+                disabled={isLoggingIn}
+                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-[#E07A5F] to-[#E76F51] text-white font-bold text-sm shadow-xl hover:scale-105 transition-all disabled:opacity-60 disabled:hover:scale-100"
               >
-                Entrar al Gestor
+                {isLoggingIn ? 'Comprobando...' : 'Entrar al Gestor'}
               </button>
             </form>
           </div>
@@ -801,12 +833,13 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
                 <div className="space-y-3">
                   {posts.map((post) => (
-                    <div key={post.id} className="glass-panel p-4 rounded-2xl flex items-center justify-between gap-4 border border-white/10">
+                    <div key={post.id} className="glass-panel p-4 rounded-2xl border border-white/10 space-y-3">
+                      <div className="flex items-center justify-between gap-4">
                       <div className="flex items-center space-x-3">
                         <img src={post.coverImage} alt={post.title} className="h-12 w-12 rounded-xl object-cover" />
                         <div>
                           <h4 className="font-bold text-sm text-white">{post.title}</h4>
-                          <p className="text-xs text-emerald-300/60">Día {post.dayNumber} • {post.island} • {post.likes} me gusta</p>
+                          <p className="text-xs text-emerald-300/60">Día {post.dayNumber} • {post.island} • {post.likes + (likesMap[post.id] ?? 0)} me gusta</p>
                         </div>
                       </div>
 
@@ -829,6 +862,32 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                           <Trash2 className="h-4 w-4" />
                         </button>
                       </div>
+                      </div>
+
+                      {(commentsMap[post.id] ?? []).length > 0 && (
+                        <div className="space-y-2 border-t border-white/10 pt-3">
+                          <p className="text-[11px] font-semibold text-emerald-300/70 uppercase tracking-wider">Comentarios de visitantes</p>
+                          {(commentsMap[post.id] ?? []).map((comment) => (
+                            <div key={comment.id} className="flex items-start justify-between gap-3 text-xs">
+                              <p className="text-emerald-100/90">
+                                <strong className="text-white">{comment.authorName}:</strong> {comment.text}
+                              </p>
+                              <button
+                                onClick={() => {
+                                  if (confirm('¿Eliminar este comentario?')) {
+                                    onDeleteComment(post.id, comment.id);
+                                    showNotice('Comentario eliminado');
+                                  }
+                                }}
+                                className="shrink-0 p-1.5 rounded-lg bg-rose-600/30 text-rose-200 hover:bg-rose-600/50"
+                                title="Eliminar comentario"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -1175,7 +1234,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
                   <div className="flex flex-wrap gap-4">
                     <button
-                      onClick={exportAllBlogData}
+                      onClick={() => exportAllBlogData({ posts, stories, islandPins, stats })}
                       className="px-5 py-3 rounded-2xl bg-[#2A9D8F] text-white font-semibold text-xs flex items-center gap-2 shadow-md hover:scale-105 transition-all"
                     >
                       <Download className="h-4 w-4" />
@@ -1183,19 +1242,16 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                     </button>
 
                     <button
-                      onClick={() => {
-                        if (confirm('¿Restablecer el blog con los datos iniciales de demostración?')) {
-                          resetToDemoData();
-                          onRefreshData();
-                          showNotice('Blog restaurado con datos de demostración');
-                        }
-                      }}
-                      className="px-5 py-3 rounded-2xl bg-rose-900/50 text-rose-200 border border-rose-500/30 font-semibold text-xs flex items-center gap-2 hover:bg-rose-900"
+                      onClick={handlePublishLocal}
+                      className="px-5 py-3 rounded-2xl bg-[#E9C46A]/20 text-[#E9C46A] border border-[#E9C46A]/40 font-semibold text-xs flex items-center gap-2 hover:bg-[#E9C46A]/30"
                     >
-                      <RefreshCw className="h-4 w-4" />
-                      <span>Restablecer Datos de Ejemplo</span>
+                      <Upload className="h-4 w-4" />
+                      <span>Subir al servidor lo guardado en este navegador</span>
                     </button>
                   </div>
+                  <p className="text-[11px] text-emerald-300/60">
+                    Solo hace falta una vez, desde el navegador donde creaste posts, historias o rutas con la versión anterior. Las estadísticas del viaje no se suben: ajústalas en el formulario de arriba.
+                  </p>
                 </div>
 
               </div>

@@ -1,93 +1,54 @@
 import type { Post, Story, IslandPin, TripStats } from '../types/blog';
-import { initialPosts, initialStories, initialIslandPins, initialStats } from '../data/initialData';
 import { calculateCurrentDay } from './dateUtils';
 
-const KEYS = {
+// Los datos del blog viven ahora en el servidor (ver api/blog.ts).
+// Estas claves son las que usaba la versión antigua en localStorage: solo se
+// leen para poder subir al servidor lo que ya se había creado en este navegador.
+const LEGACY_KEYS = {
   POSTS: 'nusa_odyssey_posts',
   STORIES: 'nusa_odyssey_stories',
   ISLANDS: 'nusa_odyssey_islands',
-  STATS: 'nusa_odyssey_stats',
-  ADMIN_PIN: 'nusa_odyssey_admin_pin',
 };
 
-// Default Admin PIN for the couple
-export const DEFAULT_ADMIN_PIN = '8614';
+export interface LocalBlogData {
+  posts?: Post[];
+  stories?: Story[];
+  islandPins?: IslandPin[];
+}
 
-
-export const getStoredPosts = (): Post[] => {
-  try {
-    const stored = localStorage.getItem(KEYS.POSTS);
-    return stored ? JSON.parse(stored) : initialPosts;
-  } catch (e) {
-    console.error('Error loading posts from storage', e);
-    return initialPosts;
-  }
-};
-
-export const savePosts = (posts: Post[]): void => {
-  localStorage.setItem(KEYS.POSTS, JSON.stringify(posts));
-};
-
-export const getStoredStories = (): Story[] => {
-  try {
-    const stored = localStorage.getItem(KEYS.STORIES);
-    return stored ? JSON.parse(stored) : initialStories;
-  } catch (e) {
-    return initialStories;
-  }
-};
-
-export const saveStories = (stories: Story[]): void => {
-  localStorage.setItem(KEYS.STORIES, JSON.stringify(stories));
-};
-
-export const getStoredIslandPins = (): IslandPin[] => {
-  try {
-    const stored = localStorage.getItem(KEYS.ISLANDS);
-    return stored ? JSON.parse(stored) : initialIslandPins;
-  } catch (e) {
-    return initialIslandPins;
-  }
-};
-
-export const saveIslandPins = (pins: IslandPin[]): void => {
-  localStorage.setItem(KEYS.ISLANDS, JSON.stringify(pins));
-};
-
-export const getStoredStats = (): TripStats => {
-  try {
-    const stored = localStorage.getItem(KEYS.STATS);
-    const stats: TripStats = stored ? JSON.parse(stored) : initialStats;
-
-    // If a trip start date is set, always recalculate currentDay from real time
-    if (stats.tripStartDate) {
-      stats.currentDay = calculateCurrentDay(stats.tripStartDate);
+export const readLocalBlogData = (): LocalBlogData => {
+  const read = <T>(key: string): T | undefined => {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? (JSON.parse(raw) as T) : undefined;
+    } catch {
+      return undefined;
     }
-
-    return stats;
-  } catch (e) {
-    return initialStats;
-  }
+  };
+  return {
+    posts: read<Post[]>(LEGACY_KEYS.POSTS),
+    stories: read<Story[]>(LEGACY_KEYS.STORIES),
+    islandPins: read<IslandPin[]>(LEGACY_KEYS.ISLANDS),
+  };
 };
 
-export const saveStats = (stats: TripStats): void => {
-  localStorage.setItem(KEYS.STATS, JSON.stringify(stats));
-};
+/** Si hay fecha de inicio del viaje, el día actual se calcula siempre a partir de la fecha real. */
+export const normalizeStats = (stats: TripStats): TripStats =>
+  stats.tripStartDate ? { ...stats, currentDay: calculateCurrentDay(stats.tripStartDate) } : stats;
 
-export const getAdminPin = (): string => {
-  return localStorage.getItem(KEYS.ADMIN_PIN) || DEFAULT_ADMIN_PIN;
-};
+export interface BlogBackup {
+  posts: Post[];
+  stories: Story[];
+  islandPins: IslandPin[];
+  stats: TripStats;
+}
 
-export const saveAdminPin = (pin: string): void => {
-  localStorage.setItem(KEYS.ADMIN_PIN, pin);
-};
-
-export const exportAllBlogData = () => {
+export const exportAllBlogData = (data: BlogBackup) => {
   const exportData = {
-    posts: getStoredPosts(),
-    stories: getStoredStories(),
-    islands: getStoredIslandPins(),
-    stats: getStoredStats(),
+    posts: data.posts,
+    stories: data.stories,
+    islands: data.islandPins,
+    stats: data.stats,
     exportedAt: new Date().toISOString(),
   };
 
@@ -98,25 +59,4 @@ export const exportAllBlogData = () => {
   document.body.appendChild(downloadAnchor);
   downloadAnchor.click();
   downloadAnchor.remove();
-};
-
-export const importBlogData = (jsonData: string): boolean => {
-  try {
-    const parsed = JSON.parse(jsonData);
-    if (parsed.posts) savePosts(parsed.posts);
-    if (parsed.stories) saveStories(parsed.stories);
-    if (parsed.islands) saveIslandPins(parsed.islands);
-    if (parsed.stats) saveStats(parsed.stats);
-    return true;
-  } catch (e) {
-    console.error('Failed to import blog data', e);
-    return false;
-  }
-};
-
-export const resetToDemoData = () => {
-  localStorage.removeItem(KEYS.POSTS);
-  localStorage.removeItem(KEYS.STORIES);
-  localStorage.removeItem(KEYS.ISLANDS);
-  localStorage.removeItem(KEYS.STATS);
 };
