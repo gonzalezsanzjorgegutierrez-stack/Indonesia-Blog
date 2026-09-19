@@ -116,9 +116,10 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       return;
     }
     setPinError({
-      wrong: 'PIN incorrecto. Inténtalo de nuevo.',
-      blocked: 'Demasiados intentos. Espera unos minutos.',
-      error: 'No se pudo comprobar el PIN. Revisa la conexión (o que ADMIN_PIN esté configurado en Vercel).',
+      wrong: 'Contraseña incorrecta. Inténtalo de nuevo.',
+      blocked: 'Demasiados intentos. Espera un rato antes de volver a probar.',
+      weak: 'La contraseña configurada en Vercel (ADMIN_PIN) es demasiado corta: usa al menos 10 caracteres.',
+      error: 'No se pudo comprobar la contraseña. Revisa la conexión (o que ADMIN_PIN esté configurado en Vercel).',
     }[result]);
   };
 
@@ -428,18 +429,19 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
             <div>
               <h3 className="font-serif-title text-2xl font-bold text-white">Acceso Privado</h3>
               <p className="text-xs text-emerald-200/70 mt-1">
-                Introduce la clave o PIN de la pareja para redactar posts o actualizar el diario.
+                Introduce la contraseña de la pareja para redactar posts o actualizar el diario.
               </p>
             </div>
 
             <form onSubmit={handleLogin} className="space-y-4">
               <input
                 type="password"
-                maxLength={12}
-                placeholder="PIN secreto"
+                maxLength={64}
+                autoComplete="current-password"
+                placeholder="Contraseña"
                 value={pinInput}
                 onChange={(e) => setPinInput(e.target.value)}
-                className="w-full text-center tracking-widest text-2xl px-4 py-3 rounded-2xl bg-black/60 border border-white/20 text-white focus:outline-none focus:border-[#E07A5F]"
+                className="w-full text-center text-lg px-4 py-3 rounded-2xl bg-black/60 border border-white/20 text-white focus:outline-none focus:border-[#E07A5F]"
                 required
               />
 

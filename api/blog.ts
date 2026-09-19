@@ -23,7 +23,7 @@ interface Res {
 
 type Cmd = (string | number)[];
 type Item = { id: string; [key: string]: unknown };
-type Auth = 'ok' | 'wrong' | 'blocked' | 'noconfig';
+type Auth = 'ok' | 'wrong' | 'blocked' | 'noconfig' | 'weak';
 
 const KEYS = {
   posts: 'blog:posts',
@@ -41,8 +41,12 @@ const ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
 const MAX_JSON_CHARS = 900_000;
 const MAX_IMAGE_CHARS = 4_300_000;
 const MAX_COMMENTS_PER_POST = 200;
-const PIN_FAIL_LIMIT = 10;
+// La contraseña de la pareja debe ser larga: un PIN corto se adivina por fuerza bruta
+const MIN_SECRET_LENGTH = 10;
+const PIN_FAIL_LIMIT = 5;
 const PIN_FAIL_WINDOW_SEC = 900;
+const LOCK_BASE_SEC = 900;
+const LOCK_MAX_SEC = 86_400;
 
 // ---------- Redis (Upstash REST) ----------
 
@@ -88,26 +92,45 @@ function safeEqual(a: string, b: string): boolean {
   return bufA.length === bufB.length && timingSafeEqual(bufA, bufB);
 }
 
-/** Comprueba el PIN. Tras 10 fallos desde la misma IP se bloquea (incluso con el PIN correcto). */
+/**
+ * Comprueba la contraseña de la pareja.
+ * - Se exige un mínimo de 10 caracteres en ADMIN_PIN (si no, no deja entrar a nadie).
+ * - 5 fallos desde una IP la bloquean, incluso con la contraseña correcta, y el
+ *   bloqueo se duplica en cada reincidencia: 15 min, 30 min, 1 h ... hasta 24 h.
+ */
 async function authenticate(pin: unknown, ip: string): Promise<Auth> {
   const expected = process.env.ADMIN_PIN;
   if (!expected) return 'noconfig';
+  if (expected.length < MIN_SECRET_LENGTH) return 'weak';
 
-  const key = `rl:pin:${ip}`;
-  const [fails] = await pipeline([['GET', key]]);
-  if (Number(fails ?? 0) >= PIN_FAIL_LIMIT) return 'blocked';
+  const lockKey = `rl:pinlock:${ip}`;
+  const failKey = `rl:pin:${ip}`;
+  const strikeKey = `rl:pinstrikes:${ip}`;
 
-  if (typeof pin === 'string' && safeEqual(pin, expected)) return 'ok';
+  const [locked] = await pipeline([['GET', lockKey]]);
+  if (locked) return 'blocked';
 
-  await pipeline([['INCR', key], ['EXPIRE', key, PIN_FAIL_WINDOW_SEC]]);
-  return 'wrong';
+  if (typeof pin === 'string' && safeEqual(pin, expected)) {
+    await pipeline([['DEL', failKey]]);
+    return 'ok';
+  }
+
+  const [fails] = await pipeline([['INCR', failKey]]);
+  if (Number(fails) === 1) await pipeline([['EXPIRE', failKey, PIN_FAIL_WINDOW_SEC]]);
+  if (Number(fails) < PIN_FAIL_LIMIT) return 'wrong';
+
+  const [strikes] = await pipeline([['INCR', strikeKey], ['EXPIRE', strikeKey, LOCK_MAX_SEC]]);
+  const lockSec = Math.min(LOCK_BASE_SEC * 2 ** (Number(strikes) - 1), LOCK_MAX_SEC);
+  await pipeline([['SET', lockKey, '1', 'EX', lockSec], ['DEL', failKey]]);
+  return 'blocked';
 }
 
 function denyAuth(res: Res, auth: Exclude<Auth, 'ok'>): void {
   const table = {
-    wrong: [401, 'PIN incorrecto'],
-    blocked: [429, 'Demasiados intentos. Espera unos minutos.'],
+    wrong: [401, 'Contraseña incorrecta'],
+    blocked: [429, 'Demasiados intentos. Espera un rato antes de volver a probar.'],
     noconfig: [500, 'Falta configurar ADMIN_PIN en Vercel'],
+    weak: [422, `ADMIN_PIN es demasiado corta: usa al menos ${MIN_SECRET_LENGTH} caracteres`],
   } as const;
   const [status, error] = table[auth];
   res.status(status).json({ error, code: auth });
