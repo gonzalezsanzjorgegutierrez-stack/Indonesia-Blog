@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { normalizeStats, readLocalBlogData } from './utils/storage';
 import {
-  fetchRemoteData, verifyPin, saveData, upsertItem, removeItem,
+  fetchRemoteData, verifyPin, saveData, upsertItem, upsertItems, removeItem,
   likePost, addComment, deleteComment,
   type RemoteData, type LoginResult,
 } from './utils/api';
@@ -145,10 +145,10 @@ export default function App() {
     });
   };
 
-  // Save Story
-  const handleSaveStory = (newStory: Story) => {
-    setStories((prev) => [newStory, ...prev]);
-    upsertItem<Story>('stories', newStory, adminPin.current).then((r) => {
+  // Save Stories: una historia por cada foto/vídeo, todas en una sola petición
+  const handleSaveStories = (newStories: Story[]) => {
+    setStories((prev) => [...newStories, ...prev]);
+    upsertItems<Story>('stories', newStories, adminPin.current).then((r) => {
       if (r.ok) setStories(r.data.items);
       else warnSaveFailed(r.error);
     });
@@ -407,7 +407,7 @@ export default function App() {
           onClose={() => setShowAdminModal(false)}
           onSavePost={handleSavePost}
           onDeletePost={handleDeletePost}
-          onSaveStory={handleSaveStory}
+          onSaveStories={handleSaveStories}
           onDeleteStory={handleDeleteStory}
           onSaveIslandPins={handleSaveIslandPins}
           onSaveStats={handleSaveStats}

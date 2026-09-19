@@ -42,6 +42,10 @@ const commentsKey = (postId: string) => `blog:comments:${postId}`;
 const ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
 const MAX_JSON_CHARS = 900_000;
 const UPLOAD_FOLDER = 'nusa-odyssey';
+// Conversión de los vídeos: MP4 H.264 (lo reproduce cualquier navegador; el .mov/HEVC del iPhone no)
+// limitado a 1280 px para no gastar el ancho de banda del plan gratuito
+const VIDEO_TRANSFORMATION = 'c_limit,w_1280,h_1280,f_mp4,vc_h264,q_auto';
+const MAX_BATCH = 20;
 const MAX_COMMENTS_PER_POST = 200;
 // La contraseña de la pareja debe ser larga: un PIN corto se adivina por fuerza bruta
 const MIN_SECRET_LENGTH = 10;
@@ -266,15 +270,23 @@ export default async function handler(req: Req, res: Res) {
       case 'upsert': {
         if (!(await requireAdmin(req, res, ip))) return;
         const { key } = body;
-        const item = body.item as Item | undefined;
-        if (!isListKey(key) || !item || typeof item.id !== 'string' || !ID_RE.test(item.id)) {
+        // Un elemento (`item`) o varios a la vez (`items`, p. ej. las fotos de una historia)
+        const incoming = (Array.isArray(body.items) ? body.items : body.item ? [body.item] : []) as Item[];
+        if (
+          !isListKey(key) ||
+          incoming.length === 0 ||
+          incoming.length > MAX_BATCH ||
+          !incoming.every((i) => i && typeof i.id === 'string' && ID_RE.test(i.id))
+        ) {
           res.status(400).json({ error: 'Datos no válidos' });
           return;
         }
         const list = await readList(key);
-        const items = list.some((i) => i.id === item.id)
-          ? list.map((i) => (i.id === item.id ? item : i))
-          : [item, ...list];
+        const byId = new Map(incoming.map((i) => [i.id, i]));
+        const existingIds = new Set(list.map((i) => i.id));
+        // Los ya existentes se reemplazan en su sitio; los nuevos van delante, en el orden recibido
+        const fresh = [...byId.values()].filter((i) => !existingIds.has(i.id));
+        const items = [...fresh, ...list.map((i) => byId.get(i.id) ?? i)];
         const json = JSON.stringify(items);
         if (json.length > MAX_JSON_CHARS) {
           res.status(413).json({ error: 'Demasiados datos' });
@@ -388,11 +400,28 @@ export default async function handler(req: Req, res: Res) {
           return;
         }
         const timestamp = Math.floor(Date.now() / 1000);
+        const params: Record<string, string> = { folder: UPLOAD_FOLDER, timestamp: String(timestamp) };
+        // Los vídeos se convierten en cuanto se suben (en segundo plano), no la primera vez que
+        // alguien los pide: la conversión al vuelo puede fallar con vídeos grandes.
+        if (body.kind === 'video') {
+          params.eager = VIDEO_TRANSFORMATION;
+          params.eager_async = 'true';
+        }
         // Firma de Cloudinary: parámetros ordenados alfabéticamente + secreto, en SHA-1
-        const signature = createHash('sha1')
-          .update(`folder=${UPLOAD_FOLDER}&timestamp=${timestamp}${apiSecret}`)
-          .digest('hex');
-        res.status(200).json({ ok: true, cloudName, apiKey, timestamp, folder: UPLOAD_FOLDER, signature });
+        const toSign = Object.keys(params)
+          .sort()
+          .map((k) => `${k}=${params[k]}`)
+          .join('&');
+        const signature = createHash('sha1').update(toSign + apiSecret).digest('hex');
+        res.status(200).json({
+          ok: true,
+          cloudName,
+          apiKey,
+          timestamp,
+          folder: UPLOAD_FOLDER,
+          signature,
+          ...(params.eager ? { eager: params.eager, eagerAsync: params.eager_async } : {}),
+        });
         return;
       }
 

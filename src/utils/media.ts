@@ -69,20 +69,23 @@ const sendToCloudinary = (
     form.append('timestamp', String(sign.timestamp));
     form.append('folder', sign.folder);
     form.append('signature', sign.signature);
+    // Los parámetros firmados tienen que enviarse tal cual: si falta alguno, Cloudinary rechaza la firma
+    if (sign.eager) form.append('eager', sign.eager);
+    if (sign.eagerAsync) form.append('eager_async', sign.eagerAsync);
     xhr.send(form);
   });
 
 /**
- * Cloudinary convierte al vuelo, la primera vez que se pide, y guarda el resultado:
+ * URL pública lista para usar:
  * - fotos: calidad automática
- * - vídeos: MP4 H.264 (lo reproduce cualquier navegador, a diferencia del .mov/HEVC del iPhone)
- *   limitado a 1280 px para no gastar el ancho de banda del plan gratuito
+ * - vídeos: la conversión que definió el servidor (MP4 H.264, máx. 1280 px), que Cloudinary
+ *   ya está generando en segundo plano. Puede tardar un poco en verse la primera vez.
  */
-const optimizedUrl = (secureUrl: string, kind: MediaKind): string =>
+const optimizedUrl = (secureUrl: string, kind: MediaKind, sign: UploadSignature): string =>
   kind === 'image'
     ? secureUrl.replace('/upload/', '/upload/q_auto/')
     : secureUrl
-        .replace('/upload/', '/upload/c_limit,w_1280,h_1280,f_mp4,vc_h264,q_auto/')
+        .replace('/upload/', `/upload/${sign.eager ?? 'f_mp4,vc_h264,q_auto'}/`)
         .replace(/\.[A-Za-z0-9]+$/, '.mp4');
 
 /**
@@ -111,11 +114,11 @@ export const uploadMedia = async (
 
   const body = kind === 'image' ? await compressImage(file) : file;
 
-  const signed = await signUpload(adminPin);
+  const signed = await signUpload(adminPin, kind);
   if (!signed.ok) throw new Error(signed.error);
 
   const secureUrl = await sendToCloudinary(body, kind, signed.data, onProgress);
-  return { url: optimizedUrl(secureUrl, kind), kind };
+  return { url: optimizedUrl(secureUrl, kind, signed.data), kind };
 };
 
 /**

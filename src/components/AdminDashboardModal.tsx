@@ -18,7 +18,7 @@ interface AdminDashboardModalProps {
   onClose: () => void;
   onSavePost: (post: Post) => void;
   onDeletePost: (postId: string) => void;
-  onSaveStory: (story: Story) => void;
+  onSaveStories: (stories: Story[]) => void;
   onDeleteStory: (storyId: string) => void;
   onSaveIslandPins: (pins: IslandPin[]) => void;
   onSaveStats: (stats: TripStats) => void;
@@ -37,7 +37,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   onClose,
   onSavePost,
   onDeletePost,
-  onSaveStory,
+  onSaveStories,
   onDeleteStory,
   onSaveIslandPins,
   onSaveStats,
@@ -52,7 +52,11 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const [pinError, setPinError] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [uploadPercent, setUploadPercent] = useState(0);
+  const [uploadProgress, setUploadProgress] = useState({ index: 0, total: 0, percent: 0 });
+  const uploadLabel =
+    uploadProgress.total > 1
+      ? `Subiendo ${uploadProgress.index}/${uploadProgress.total} · ${uploadProgress.percent}%`
+      : `Subiendo ${uploadProgress.percent}%`;
 
   const [activeTab, setActiveTab] = useState<'posts' | 'stories' | 'manage_posts' | 'map' | 'stats'>('posts');
 
@@ -85,9 +89,10 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
   // Story Form State
   const [storyTitle, setStoryTitle] = useState('');
-  const [storyType, setStoryType] = useState<'image' | 'video'>('image');
-  const [storyMediaUrl, setStoryMediaUrl] = useState('https://images.unsplash.com/photo-1544551763-46a013bb70d5?auto=format&fit=crop&w=800&q=80');
-  const [storyLocation, setStoryLocation] = useState('Labuan Bajo');
+  // Cada foto/vídeo de la lista se publica como una historia del reel
+  const [storyItems, setStoryItems] = useState<{ url: string; type: 'image' | 'video' }[]>([]);
+  const [storyLink, setStoryLink] = useState('');
+  const [storyLocation, setStoryLocation] = useState(stats.currentLocation);
 
   // Stats & Settings Form State
   const [editCurrentDay, setEditCurrentDay] = useState(stats.currentDay);
@@ -148,42 +153,54 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     target: 'cover' | 'gallery' | 'story' | 'postVideo'
   ) => {
     const input = e.target;
-    const files = input.files;
-    if (!files || files.length === 0) return;
+    const files = Array.from(input.files ?? []);
+    if (files.length === 0) return;
 
     // Portada y galería: solo fotos · vídeo del post: solo vídeo · historias: ambos
     const expected = target === 'postVideo' ? 'video' : target === 'story' ? null : 'image';
 
     setIsUploading(true);
-    setUploadPercent(0);
+    const failures: string[] = [];
 
     try {
-      for (const file of Array.from(files)) {
-        if (expected && !file.type.startsWith(`${expected}/`)) {
-          throw new Error(
-            expected === 'video'
-              ? 'Aquí solo se pueden subir vídeos.'
-              : 'Aquí solo se pueden subir fotos. Los vídeos van en el campo "Vídeo" o en las Historias.'
+      // Uno tras otro: si falla alguno, los demás siguen y se avisa al final
+      for (const [i, file] of files.entries()) {
+        setUploadProgress({ index: i + 1, total: files.length, percent: 0 });
+        try {
+          if (expected && !file.type.startsWith(`${expected}/`)) {
+            throw new Error(
+              expected === 'video'
+                ? 'Aquí solo se pueden subir vídeos.'
+                : 'Aquí solo se pueden subir fotos. Los vídeos van en el campo "Vídeo" o en las Historias.'
+            );
+          }
+          const { url, kind } = await uploadMedia(file, pinInput, (fraction) =>
+            setUploadProgress((p) => ({ ...p, percent: Math.round(fraction * 100) }))
           );
+          if (target === 'cover') setPostCoverImage(url);
+          if (target === 'postVideo') setPostVideoUrl(url);
+          if (target === 'story') setStoryItems((prev) => [...prev, { url, type: kind }]);
+          if (target === 'gallery') setPostGalleryImages((prev) => [...prev, url]);
+        } catch (error) {
+          failures.push(`${file.name}: ${error instanceof Error ? error.message : error}`);
         }
-        const { url, kind } = await uploadMedia(file, pinInput, (fraction) =>
-          setUploadPercent(Math.round(fraction * 100))
-        );
-        if (target === 'cover') setPostCoverImage(url);
-        if (target === 'postVideo') setPostVideoUrl(url);
-        if (target === 'story') {
-          setStoryMediaUrl(url);
-          setStoryType(kind);
-        }
-        if (target === 'gallery') setPostGalleryImages((prev) => [...prev, url]);
       }
-      showNotice('¡Subido con éxito!');
-    } catch (error) {
-      alert('Error al subir: ' + (error instanceof Error ? error.message : error));
     } finally {
       setIsUploading(false);
       input.value = ''; // permite volver a elegir el mismo archivo
     }
+
+    const uploaded = files.length - failures.length;
+    if (uploaded > 0) showNotice(uploaded === 1 ? '¡Subido con éxito!' : `¡${uploaded} archivos subidos!`);
+    if (failures.length > 0) alert(`No se pudo subir:\n\n${failures.join('\n')}`);
+  };
+
+  const handleAddStoryLink = () => {
+    const url = storyLink.trim();
+    if (!url) return;
+    const isVideo = /\.(mp4|mov|webm|m4v)(\?|#|$)/i.test(url) || url.includes('/video/upload/');
+    setStoryItems((prev) => [...prev, { url, type: isVideo ? 'video' : 'image' }]);
+    setStoryLink('');
   };
 
   const handleSavePostForm = (e: React.FormEvent) => {
@@ -246,21 +263,24 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
   const handleSaveStoryForm = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!storyTitle.trim() || !storyMediaUrl.trim()) return;
+    if (!storyTitle.trim() || storyItems.length === 0) return;
 
-    const newStory: Story = {
-      id: `story-${Date.now()}`,
-      title: storyTitle,
-      type: storyType,
-      mediaUrl: formatImageUrl(storyMediaUrl),
+    // Una historia por cada foto/vídeo, con el mismo título y lugar
+    const now = Date.now();
+    const newStories: Story[] = storyItems.map((item, i) => ({
+      id: `story-${now}-${i}`,
+      title: storyTitle.trim(),
+      type: item.type,
+      mediaUrl: formatImageUrl(item.url),
       location: storyLocation,
       timestamp: 'Justo ahora',
       likes: 1,
-    };
+    }));
 
-    onSaveStory(newStory);
-    showNotice('¡Historia subida al reel!');
+    onSaveStories(newStories);
+    showNotice(newStories.length === 1 ? '¡Historia subida al reel!' : `¡${newStories.length} historias subidas al reel!`);
     setStoryTitle('');
+    setStoryItems([]);
   };
 
   const handleSaveStatsForm = (e: React.FormEvent) => {
@@ -643,7 +663,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                       isUploading ? 'bg-emerald-800/30 border-emerald-500/10 cursor-wait' : 'bg-emerald-800/60 hover:bg-emerald-700 border-emerald-500/30'
                     }`}>
                       <Upload className={`h-4 w-4 ${isUploading ? 'animate-pulse' : ''}`} />
-                      <span>{isUploading ? `Subiendo ${uploadPercent}%` : `Subir vídeo (máx. ${MAX_VIDEO_MB} MB)`}</span>
+                      <span>{isUploading ? uploadLabel : `Subir vídeo (máx. ${MAX_VIDEO_MB} MB)`}</span>
                       <input type="file" accept="video/*" className="hidden" disabled={isUploading} onChange={(e) => handleFileUpload(e, 'postVideo')} />
                     </label>
                   </div>
@@ -666,7 +686,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                       isUploading ? 'bg-emerald-800/30 border-emerald-500/10 cursor-wait' : 'bg-emerald-800/60 hover:bg-emerald-700 border-emerald-500/30'
                     }`}>
                       <Upload className={`h-4 w-4 ${isUploading ? 'animate-pulse' : ''}`} />
-                      <span>{isUploading ? `Subiendo ${uploadPercent}%` : 'Subir foto local'}</span>
+                      <span>{isUploading ? uploadLabel : 'Subir foto local'}</span>
                       <input type="file" accept="image/*" className="hidden" disabled={isUploading} onChange={(e) => handleFileUpload(e, 'cover')} />
                     </label>
                   </div>
@@ -772,52 +792,78 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="block text-xs font-medium text-emerald-200">Tipo & Archivo Media</label>
-                  <div className="flex gap-4">
-                    <button
-                      type="button"
-                      onClick={() => setStoryType('image')}
-                      className={`px-4 py-2 rounded-xl text-xs font-semibold ${storyType === 'image' ? 'bg-[#2A9D8F] text-white' : 'glass-panel text-emerald-300'}`}
-                    >
-                      Fotografía
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setStoryType('video')}
-                      className={`px-4 py-2 rounded-xl text-xs font-semibold ${storyType === 'video' ? 'bg-[#2A9D8F] text-white' : 'glass-panel text-emerald-300'}`}
-                    >
-                      Clip de Vídeo (MP4)
-                    </button>
-                  </div>
+                <div className="space-y-3">
+                  <label className="block text-xs font-medium text-emerald-200">Fotos y vídeos de la historia</label>
 
-                  <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
-                    <input
-                      type="text"
-                      placeholder="URL del archivo media..."
-                      value={storyMediaUrl}
-                      onChange={(e) => setStoryMediaUrl(e.target.value)}
-                      className="flex-1 w-full px-4 py-2.5 rounded-xl bg-black/50 border border-white/15 text-white text-sm"
-                    />
-
+                  <div className="flex flex-col sm:flex-row items-stretch gap-3">
                     <label className={`w-full sm:w-auto px-4 py-2.5 rounded-xl text-white font-medium text-xs cursor-pointer flex items-center justify-center gap-2 ${
                       isUploading ? 'bg-emerald-800/50 cursor-wait' : 'bg-emerald-800 hover:bg-emerald-700'
                     }`}>
                       <Upload className={`h-4 w-4 ${isUploading ? 'animate-pulse' : ''}`} />
-                      <span>{isUploading ? `Subiendo ${uploadPercent}%` : 'Subir foto o vídeo'}</span>
-                      <input type="file" accept="image/*,video/*" className="hidden" disabled={isUploading} onChange={(e) => handleFileUpload(e, 'story')} />
+                      <span>{isUploading ? uploadLabel : 'Subir fotos o vídeos (puedes elegir varios)'}</span>
+                      <input type="file" multiple accept="image/*,video/*" className="hidden" disabled={isUploading} onChange={(e) => handleFileUpload(e, 'story')} />
                     </label>
+
+                    <div className="flex flex-1 gap-2">
+                      <input
+                        type="text"
+                        placeholder="…o pega un enlace"
+                        value={storyLink}
+                        onChange={(e) => setStoryLink(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddStoryLink();
+                          }
+                        }}
+                        className="flex-1 min-w-0 px-4 py-2.5 rounded-xl bg-black/50 border border-white/15 text-white text-sm"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddStoryLink}
+                        className="px-4 py-2.5 rounded-xl bg-white/10 text-emerald-100 text-xs font-semibold hover:bg-white/15"
+                      >
+                        Añadir
+                      </button>
+                    </div>
                   </div>
+
+                  {storyItems.length > 0 && (
+                    <div className="grid grid-cols-3 sm:grid-cols-5 gap-3">
+                      {storyItems.map((item, i) => (
+                        <div key={`${item.url}-${i}`} className="relative aspect-square rounded-xl overflow-hidden border border-white/15 bg-black/40">
+                          {item.type === 'video' ? (
+                            <video src={item.url} muted preload="metadata" className="h-full w-full object-cover" />
+                          ) : (
+                            <img src={item.url} alt="" className="h-full w-full object-cover" />
+                          )}
+                          {item.type === 'video' && (
+                            <span className="absolute bottom-1 left-1 bg-black/70 text-[9px] text-white px-1.5 py-0.5 rounded">VÍDEO</span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setStoryItems((prev) => prev.filter((_, idx) => idx !== i))}
+                            className="absolute top-1 right-1 p-1 rounded-full bg-black/70 text-white hover:bg-rose-600"
+                            title="Quitar"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   <p className="text-[11px] text-emerald-300/60">
-                    Vídeos: máximo {MAX_VIDEO_MB} MB (unos 30-40 s). Para uno más largo, pega un enlace en el campo de arriba.
+                    Cada foto o vídeo se publica como una historia del reel, con el mismo título y lugar. Vídeos: máximo {MAX_VIDEO_MB} MB (unos 30-40 s); para uno más largo, pega un enlace.
                   </p>
                 </div>
 
                 <button
                   type="submit"
-                  className="w-full py-3.5 rounded-2xl bg-[#2A9D8F] text-white font-bold text-sm shadow-lg hover:brightness-110"
+                  disabled={isUploading || storyItems.length === 0}
+                  className="w-full py-3.5 rounded-2xl bg-[#2A9D8F] text-white font-bold text-sm shadow-lg hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Añadir al Reel de Historias
+                  {storyItems.length > 1 ? `Añadir ${storyItems.length} historias al Reel` : 'Añadir al Reel de Historias'}
                 </button>
               </form>
             )}

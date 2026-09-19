@@ -65,6 +65,10 @@ export const saveData = (key: DataKey, value: unknown, pin: string) =>
 export const upsertItem = <T>(key: ListKey, item: T, pin: string) =>
   call<{ items: T[] }>({ action: 'upsert', key, item }, pin);
 
+/** Guarda varios elementos de una vez (una sola petición, para que no se pisen entre sí). */
+export const upsertItems = <T>(key: ListKey, items: T[], pin: string) =>
+  call<{ items: T[] }>({ action: 'upsert', key, items }, pin);
+
 export const removeItem = <T>(key: ListKey, id: string, pin: string) =>
   call<{ items: T[] }>({ action: 'remove', key, id }, pin);
 
@@ -83,7 +87,10 @@ export interface UploadSignature {
   timestamp: number;
   folder: string;
   signature: string;
+  /** Solo en vídeos: conversión que Cloudinary hace en cuanto se sube (va incluida en la firma). */
+  eager?: string;
+  eagerAsync?: string;
 }
 
-export const signUpload = (pin: string) =>
-  call<UploadSignature>({ action: 'signUpload' }, pin);
+export const signUpload = (pin: string, kind: 'image' | 'video') =>
+  call<UploadSignature>({ action: 'signUpload', kind }, pin);
