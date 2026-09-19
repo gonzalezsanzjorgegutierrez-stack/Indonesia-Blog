@@ -122,9 +122,9 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       return;
     }
     setPinError({
-      wrong: 'Contraseña incorrecta. Inténtalo de nuevo.',
+      wrong: 'Contraseña incorrecta.',
       blocked: 'Demasiados intentos. Espera un rato antes de volver a probar.',
-      error: 'No se pudo entrar ahora mismo. Revisa la conexión y, si sigue igual, la configuración de ADMIN_PIN en Vercel.',
+      error: 'No se pudo comprobar ahora mismo. Inténtalo de nuevo en un momento.',
     }[result]);
   };
 

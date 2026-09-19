@@ -108,7 +108,10 @@ function safeEqual(a: string, b: string): boolean {
  */
 async function authenticate(pin: unknown, ip: string): Promise<Auth> {
   const expected = process.env.ADMIN_PIN;
-  if (!expected) return 'noconfig';
+  if (!expected) {
+    console.error('ADMIN_PIN no está configurada en Vercel. Acceso de administración desactivado.');
+    return 'noconfig';
+  }
   if (expected.length < MIN_SECRET_LENGTH) {
     console.error(`ADMIN_PIN demasiado corta: usa al menos ${MIN_SECRET_LENGTH} caracteres. Acceso de administración desactivado.`);
     return 'noconfig';
@@ -140,10 +143,12 @@ function denyAuth(res: Res, auth: Exclude<Auth, 'ok'>): void {
   const table = {
     wrong: [401, 'Contraseña incorrecta'],
     blocked: [429, 'Demasiados intentos. Espera un rato antes de volver a probar.'],
-    noconfig: [500, 'Acceso de administración no disponible. Revisa ADMIN_PIN en Vercel.'],
+    // Una configuración mala se responde igual que una contraseña mala: quien pregunta desde fuera
+    // no debe enterarse de nada. El motivo real queda en los registros de Vercel.
+    noconfig: [401, 'Contraseña incorrecta'],
   } as const;
   const [status, error] = table[auth];
-  res.status(status).json({ error, code: auth });
+  res.status(status).json({ error, code: auth === 'noconfig' ? 'wrong' : auth });
 }
 
 async function requireAdmin(req: Req, res: Res, ip: string): Promise<boolean> {
