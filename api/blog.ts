@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
 /**
  * Backend del blog (Vercel Function). Guarda los datos compartidos en Redis (Upstash).
@@ -46,6 +46,7 @@ const UPLOAD_FOLDER = 'nusa-odyssey';
 // limitado a 1280 px para no gastar el ancho de banda del plan gratuito
 const VIDEO_TRANSFORMATION = 'c_limit,w_1280,h_1280,f_mp4,vc_h264,q_auto';
 const MAX_BATCH = 20;
+const SESSION_TTL_SEC = 60 * 60 * 24 * 30; // 30 días, se renueva cada vez que se usa
 const MAX_COMMENTS_PER_POST = 200;
 // La contraseña de la pareja debe ser larga: un PIN corto se adivina por fuerza bruta
 const MIN_SECRET_LENGTH = 10;
@@ -157,10 +158,40 @@ function denyAuth(res: Res, auth: Exclude<Auth, 'ok'>): void {
  * pueden alterarlas, así que una frase con "ñ" o "á" entraba en el login pero fallaba al guardar.
  */
 async function requireAdmin(body: Record<string, unknown>, res: Res, ip: string): Promise<boolean> {
+  // Sesión iniciada en este dispositivo: se identifica con la llave aleatoria, no con la contraseña
+  if (typeof body.token === 'string') {
+    if (await validSession(body.token)) return true;
+    res.status(401).json({ error: 'La sesión ha caducado. Vuelve a entrar.', code: 'session' });
+    return false;
+  }
   const auth = await authenticate(body.pin, ip);
   if (auth === 'ok') return true;
   denyAuth(res, auth);
   return false;
+}
+
+// ---------- Sesiones ----------
+// Al entrar con la contraseña el servidor da una llave aleatoria (256 bits) válida 30 días, para que
+// el dispositivo no tenga que volver a pedirla ni guardarla. En Redis solo se guarda el hash de la
+// llave, así que ni una filtración de la base de datos permitiría usarla. Cada sesión lleva la huella
+// de la contraseña con la que se creó: si cambias ADMIN_PIN en Vercel, todas las sesiones dejan de valer.
+
+const sessionKey = (token: string) => `session:${createHash('sha256').update(token).digest('hex')}`;
+const pinFingerprint = () => createHash('sha256').update(`pin-v1:${process.env.ADMIN_PIN ?? ''}`).digest('hex');
+
+async function createSession(): Promise<string> {
+  const token = randomBytes(32).toString('hex');
+  await pipeline([['SET', sessionKey(token), pinFingerprint(), 'EX', SESSION_TTL_SEC]]);
+  return token;
+}
+
+async function validSession(token: string): Promise<boolean> {
+  const secret = process.env.ADMIN_PIN;
+  if (!secret || secret.length < MIN_SECRET_LENGTH || !/^[a-f0-9]{64}$/.test(token)) return false;
+  const [stored] = await pipeline([['GET', sessionKey(token)]]);
+  if (typeof stored !== 'string' || !safeEqual(stored, pinFingerprint())) return false;
+  await pipeline([['EXPIRE', sessionKey(token), SESSION_TTL_SEC]]);
+  return true;
 }
 
 /** Límite por IP para acciones públicas (likes, comentarios). */
@@ -245,8 +276,25 @@ export default async function handler(req: Req, res: Res) {
     switch (body.action) {
       case 'verify': {
         const auth = await authenticate(body.pin, ip);
-        if (auth === 'ok') res.status(200).json({ ok: true });
+        if (auth === 'ok') res.status(200).json({ ok: true, token: await createSession() });
         else denyAuth(res, auth);
+        return;
+      }
+
+      // ¿Sigue valiendo la sesión guardada en este dispositivo?
+      case 'session': {
+        const valid = typeof body.token === 'string' && (await validSession(body.token));
+        if (valid) res.status(200).json({ ok: true });
+        else res.status(401).json({ error: 'La sesión ha caducado. Vuelve a entrar.', code: 'session' });
+        return;
+      }
+
+      // Cerrar sesión: la llave deja de valer también en el servidor
+      case 'logout': {
+        if (typeof body.token === 'string' && /^[a-f0-9]{64}$/.test(body.token)) {
+          await pipeline([['DEL', sessionKey(body.token)]]);
+        }
+        res.status(200).json({ ok: true });
         return;
       }
 

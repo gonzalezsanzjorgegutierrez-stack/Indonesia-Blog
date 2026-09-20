@@ -94,7 +94,7 @@ const optimizedUrl = (secureUrl: string, kind: MediaKind, sign: UploadSignature)
  */
 export const uploadMedia = async (
   file: File,
-  adminPin: string,
+  adminToken: string,
   onProgress?: (fraction: number) => void
 ): Promise<UploadedMedia> => {
   const kind: MediaKind | null = file.type.startsWith('image/')
@@ -114,7 +114,7 @@ export const uploadMedia = async (
 
   const body = kind === 'image' ? await compressImage(file) : file;
 
-  const signed = await signUpload(adminPin, kind);
+  const signed = await signUpload(adminToken, kind);
   if (!signed.ok) throw new Error(signed.error);
 
   const secureUrl = await sendToCloudinary(body, kind, signed.data, onProgress);

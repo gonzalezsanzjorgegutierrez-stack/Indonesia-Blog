@@ -18,13 +18,13 @@ export type ApiResult<T> =
   | { ok: true; data: T }
   | { ok: false; status: number; error: string };
 
-async function call<T>(body: Record<string, unknown>, pin?: string): Promise<ApiResult<T>> {
+async function call<T>(body: Record<string, unknown>, token?: string): Promise<ApiResult<T>> {
   try {
     const res = await fetch(ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      // La contraseña va en el cuerpo (UTF-8), no en una cabecera: ver requireAdmin en api/blog.ts
-      body: JSON.stringify(pin ? { ...body, pin } : body),
+      // La credencial (llave de sesión) va en el cuerpo, no en una cabecera: ver requireAdmin en api/blog.ts
+      body: JSON.stringify(token ? { ...body, token } : body),
     });
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     if (!res.ok) {
@@ -49,26 +49,37 @@ export async function fetchRemoteData(): Promise<RemoteData | null> {
 
 export type LoginResult = 'ok' | 'wrong' | 'blocked' | 'error';
 
-export async function verifyPin(pin: string): Promise<LoginResult> {
-  const result = await call<{ ok: true }>({ action: 'verify', pin });
-  if (result.ok) return 'ok';
-  if (result.status === 401) return 'wrong';
-  if (result.status === 429) return 'blocked';
-  return 'error';
+/** Entra con la contraseña. Si es correcta, el servidor devuelve la llave de sesión de este dispositivo. */
+export async function login(pin: string): Promise<{ result: LoginResult; token: string | null }> {
+  const r = await call<{ ok: true; token: string }>({ action: 'verify', pin });
+  if (r.ok) return { result: 'ok', token: r.data.token };
+  if (r.status === 401) return { result: 'wrong', token: null };
+  if (r.status === 429) return { result: 'blocked', token: null };
+  return { result: 'error', token: null };
 }
 
-export const saveData = (key: DataKey, value: unknown, pin: string) =>
-  call<{ ok: true }>({ action: 'save', key, value }, pin);
+/** ¿Sigue valiendo la llave guardada? `unknown` = no se pudo comprobar (sin conexión): se conserva. */
+export async function checkSession(token: string): Promise<'valid' | 'invalid' | 'unknown'> {
+  const r = await call<{ ok: true }>({ action: 'session' }, token);
+  if (r.ok) return 'valid';
+  return r.status === 401 ? 'invalid' : 'unknown';
+}
 
-export const upsertItem = <T>(key: ListKey, item: T, pin: string) =>
-  call<{ items: T[] }>({ action: 'upsert', key, item }, pin);
+/** Cierra la sesión también en el servidor: la llave deja de valer. */
+export const logoutSession = (token: string) => call<{ ok: true }>({ action: 'logout' }, token);
+
+export const saveData = (key: DataKey, value: unknown, token: string) =>
+  call<{ ok: true }>({ action: 'save', key, value }, token);
+
+export const upsertItem = <T>(key: ListKey, item: T, token: string) =>
+  call<{ items: T[] }>({ action: 'upsert', key, item }, token);
 
 /** Guarda varios elementos de una vez (una sola petición, para que no se pisen entre sí). */
-export const upsertItems = <T>(key: ListKey, items: T[], pin: string) =>
-  call<{ items: T[] }>({ action: 'upsert', key, items }, pin);
+export const upsertItems = <T>(key: ListKey, items: T[], token: string) =>
+  call<{ items: T[] }>({ action: 'upsert', key, items }, token);
 
-export const removeItem = <T>(key: ListKey, id: string, pin: string) =>
-  call<{ items: T[] }>({ action: 'remove', key, id }, pin);
+export const removeItem = <T>(key: ListKey, id: string, token: string) =>
+  call<{ items: T[] }>({ action: 'remove', key, id }, token);
 
 export const likePost = (postId: string) =>
   call<{ likes: number }>({ action: 'like', postId });
@@ -76,8 +87,8 @@ export const likePost = (postId: string) =>
 export const addComment = (postId: string, authorName: string, text: string) =>
   call<{ comment: Comment }>({ action: 'comment', postId, authorName, text });
 
-export const deleteComment = (postId: string, commentId: string, pin: string) =>
-  call<{ ok: true }>({ action: 'deleteComment', postId, commentId }, pin);
+export const deleteComment = (postId: string, commentId: string, token: string) =>
+  call<{ ok: true }>({ action: 'deleteComment', postId, commentId }, token);
 
 export interface UploadSignature {
   cloudName: string;
@@ -90,5 +101,5 @@ export interface UploadSignature {
   eagerAsync?: string;
 }
 
-export const signUpload = (pin: string, kind: 'image' | 'video') =>
-  call<UploadSignature>({ action: 'signUpload', kind }, pin);
+export const signUpload = (token: string, kind: 'image' | 'video') =>
+  call<UploadSignature>({ action: 'signUpload', kind }, token);

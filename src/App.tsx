@@ -1,7 +1,7 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { normalizeStats, readLocalBlogData } from './utils/storage';
 import {
-  fetchRemoteData, verifyPin, saveData, upsertItem, upsertItems, removeItem,
+  fetchRemoteData, login, checkSession, logoutSession, saveData, upsertItem, upsertItems, removeItem,
   likePost, addComment, deleteComment,
   type RemoteData, type LoginResult, type ApiResult,
 } from './utils/api';
@@ -17,6 +17,23 @@ import { StoryViewerModal } from './components/StoryViewerModal';
 import { AdminDashboardModal } from './components/AdminDashboardModal';
 import { TipsSection } from './components/TipsSection';
 import { Compass, Search, BookOpen } from 'lucide-react';
+
+const TOKEN_KEY = 'nusa_admin_session';
+const readStoredToken = (): string | null => {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+};
+const storeToken = (token: string | null) => {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* navegación privada: la sesión dura solo mientras la pestaña esté abierta */
+  }
+};
 
 export default function App() {
   const [posts, setPosts] = useState<Post[]>(initialPosts);
@@ -37,8 +54,9 @@ export default function App() {
   const [activeStory, setActiveStory] = useState<Story | null>(null);
   const [showAdminModal, setShowAdminModal] = useState<boolean>(false);
 
-  // PIN de la pareja: solo vive en memoria mientras la pestaña está abierta
-  const adminPin = useRef('');
+  // Llave de sesión de la pareja (ver api/blog.ts). Se guarda en este dispositivo para no pedir la
+  // contraseña cada vez; la contraseña en sí no se guarda en ningún sitio.
+  const [adminToken, setAdminToken] = useState<string | null>(readStoredToken);
 
   // Los datos compartidos viven en el servidor: todos los dispositivos ven lo mismo
   // Lo que responde el servidor manda siempre; si algo nunca se ha guardado, se ve el estado inicial
@@ -89,7 +107,13 @@ export default function App() {
       onSaved?.(result.data);
       return true;
     }
-    warnSaveFailed(result.error);
+    if (result.status === 401) {
+      // La sesión ha caducado (o se cerró en otro sitio): hay que volver a entrar
+      clearSession();
+      alert('La sesión ha caducado. Vuelve a entrar con la contraseña.');
+    } else {
+      warnSaveFailed(result.error);
+    }
     await refreshData();
     return false;
   };
@@ -117,20 +141,46 @@ export default function App() {
 
   // --- Acciones de la pareja (requieren PIN, se validan en el servidor) ---
 
+  const clearSession = () => {
+    setAdminToken(null);
+    storeToken(null);
+  };
+
   const handleAdminLogin = async (pin: string): Promise<LoginResult> => {
-    const result = await verifyPin(pin);
-    if (result === 'ok') adminPin.current = pin;
+    const { result, token } = await login(pin);
+    if (result === 'ok' && token) {
+      setAdminToken(token);
+      storeToken(token);
+    }
     return result;
   };
 
+  const handleAdminLogout = () => {
+    if (adminToken) void logoutSession(adminToken);
+    clearSession();
+    setShowAdminModal(false);
+  };
+
+  // Al abrir la página: si hay una sesión guardada, comprueba que sigue valiendo (si no, pide la contraseña)
+  useEffect(() => {
+    const stored = readStoredToken();
+    if (!stored) return;
+    checkSession(stored).then((state) => {
+      if (state === 'invalid') {
+        setAdminToken(null);
+        storeToken(null);
+      }
+    });
+  }, []);
+
   const handleSaveIslandPins = (pins: IslandPin[]) => {
     setIslandPins(pins);
-    return persist(saveData('islandPins', pins, adminPin.current));
+    return persist(saveData('islandPins', pins, adminToken ?? ''));
   };
 
   const handleSaveStats = (newStats: TripStats) => {
     setStats(newStats);
-    return persist(saveData('stats', newStats, adminPin.current));
+    return persist(saveData('stats', newStats, adminToken ?? ''));
   };
 
   // Save / Edit Post
@@ -140,42 +190,40 @@ export default function App() {
         ? prev.map((p) => (p.id === newPost.id ? newPost : p))
         : [newPost, ...prev]
     );
-    return persist(upsertItem<Post>('posts', newPost, adminPin.current), (d) => setPosts(d.items));
+    return persist(upsertItem<Post>('posts', newPost, adminToken ?? ''), (d) => setPosts(d.items));
   };
 
   // Delete Post
   const handleDeletePost = (postId: string) => {
     setPosts((prev) => prev.filter((p) => p.id !== postId));
-    return persist(removeItem<Post>('posts', postId, adminPin.current), (d) => setPosts(d.items));
+    return persist(removeItem<Post>('posts', postId, adminToken ?? ''), (d) => setPosts(d.items));
   };
 
   // Save Stories: una historia por cada foto/vídeo, todas en una sola petición
   const handleSaveStories = (newStories: Story[]) => {
     setStories((prev) => [...newStories, ...prev]);
-    return persist(upsertItems<Story>('stories', newStories, adminPin.current), (d) => setStories(d.items));
+    return persist(upsertItems<Story>('stories', newStories, adminToken ?? ''), (d) => setStories(d.items));
   };
 
   // Delete Story
   const handleDeleteStory = (storyId: string) => {
     setStories((prev) => prev.filter((s) => s.id !== storyId));
-    return persist(removeItem<Story>('stories', storyId, adminPin.current), (d) => setStories(d.items));
+    return persist(removeItem<Story>('stories', storyId, adminToken ?? ''), (d) => setStories(d.items));
   };
 
   // Moderación: borrar un comentario de un visitante
   const handleDeleteComment = (postId: string, commentId: string) => {
     setComments((prev) => ({ ...prev, [postId]: (prev[postId] ?? []).filter((c) => c.id !== commentId) }));
-    deleteComment(postId, commentId, adminPin.current).then((r) => {
-      if (!r.ok) warnSaveFailed(r.error);
-    });
+    void persist(deleteComment(postId, commentId, adminToken ?? ''));
   };
 
   // Migración única: sube al servidor lo que se creó en este navegador con la versión antigua
   const handlePublishLocalData = async (): Promise<boolean> => {
     const local = readLocalBlogData();
     const jobs = [];
-    if (local.posts) jobs.push(saveData('posts', local.posts, adminPin.current));
-    if (local.stories) jobs.push(saveData('stories', local.stories, adminPin.current));
-    if (local.islandPins) jobs.push(saveData('islandPins', local.islandPins, adminPin.current));
+    if (local.posts) jobs.push(saveData('posts', local.posts, adminToken ?? ''));
+    if (local.stories) jobs.push(saveData('stories', local.stories, adminToken ?? ''));
+    if (local.islandPins) jobs.push(saveData('islandPins', local.islandPins, adminToken ?? ''));
     const results = await Promise.all(jobs);
     const failed = results.find((r) => !r.ok);
     if (failed && !failed.ok) {
@@ -412,7 +460,9 @@ export default function App() {
           likesMap={likes}
           commentsMap={comments}
           onDeleteComment={handleDeleteComment}
+          adminToken={adminToken}
           onLogin={handleAdminLogin}
+          onLogout={handleAdminLogout}
           onPublishLocalData={handlePublishLocalData}
         />
       )}

@@ -1,14 +1,34 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import L from 'leaflet';
 import type { Post, Story, IslandPin, TripStats, Comment } from '../types/blog';
 import type { LoginResult } from '../utils/api';
 import { 
   X, Lock, KeyRound, Plus, Edit, Trash2, Save, Upload, MapPin, 
-  Film, Settings, Download, RefreshCw, CheckCircle2
+  Film, Settings, Download, RefreshCw, CheckCircle2, LogOut
 } from 'lucide-react';
 import { exportAllBlogData, readLocalBlogData } from '../utils/storage';
 import { uploadMedia, formatImageUrl, MAX_VIDEO_MB } from '../utils/media';
 import { calculateCurrentDay } from '../utils/dateUtils';
+
+// Sugerencias de isla/región además de las de vuestra ruta y vuestros posts
+const DEFAULT_REGIONS = [
+  'Bali', 'Nusa Penida', 'Nusa Lembongan', 'Islas Gili', 'Lombok', 'Sumbawa', 'Flores', 'Komodo',
+  'Sumba', 'Timor', 'Java', 'Yakarta', 'Yogyakarta', 'Sulawesi', 'Sumatra', 'Borneo',
+  'Islas Banda', 'Mar de Banda', 'Molucas',
+];
+
+/** Une listas de nombres sin repetir (sin distinguir mayúsculas) y sin vacíos, conservando el orden. */
+const uniqueNames = (...lists: string[][]): string[] => {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const name of lists.flat()) {
+    const clean = name?.trim();
+    if (!clean || seen.has(clean.toLowerCase())) continue;
+    seen.add(clean.toLowerCase());
+    out.push(clean);
+  }
+  return out;
+};
 
 interface AdminDashboardModalProps {
   posts: Post[];
@@ -26,7 +46,11 @@ interface AdminDashboardModalProps {
   likesMap: Record<string, number>;
   commentsMap: Record<string, Comment[]>;
   onDeleteComment: (postId: string, commentId: string) => void;
+  // Llave de sesión (null = no ha entrado). Vive en la aplicación, no en este panel, para que
+  // cerrar y volver a abrir el panel no pida la contraseña otra vez
+  adminToken: string | null;
   onLogin: (pin: string) => Promise<LoginResult>;
+  onLogout: () => void;
   onPublishLocalData: () => Promise<boolean>;
 }
 
@@ -45,11 +69,13 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   likesMap,
   commentsMap,
   onDeleteComment,
+  adminToken,
   onLogin,
+  onLogout,
   onPublishLocalData,
 }) => {
   const [pinInput, setPinInput] = useState('');
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const isAuthenticated = adminToken !== null;
   const [pinError, setPinError] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -65,7 +91,10 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   // New/Editing Post Form State
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
   const [postTitle, setPostTitle] = useState('');
-  const [postIsland, setPostIsland] = useState('Flores & Komodo');
+  // Por defecto: la isla donde estáis ahora (parada "actual" de la ruta) o la del último post
+  const [postIsland, setPostIsland] = useState(
+    () => islandPins.find((p) => p.status === 'current')?.island ?? posts[0]?.island ?? ''
+  );
   const [postLocation, setPostLocation] = useState('');
   const [postLat] = useState(-8.65);
   const [postLng] = useState(119.6);
@@ -76,8 +105,18 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const [postVideoUrl, setPostVideoUrl] = useState('');
   const [postExcerpt, setPostExcerpt] = useState('');
   const [postContent, setPostContent] = useState('');
-  const [postTags, setPostTags] = useState('Indonesia, Aventura, Komodo');
-  const [postTips, setPostTips] = useState('Lleva calzado adecuado y protector solar.');
+  const [postTags, setPostTags] = useState('');
+  const [postTips, setPostTips] = useState('');
+
+  // Islas de vuestro viaje (paradas de la ruta + posts ya publicados) y sugerencias completas.
+  // El mapa filtra el diario comparando estos nombres, así que conviene reutilizar los mismos.
+  const tripIslands = useMemo(
+    () => uniqueNames(islandPins.map((p) => p.island), posts.map((p) => p.island)),
+    [islandPins, posts]
+  );
+  const islandOptions = useMemo(() => uniqueNames(tripIslands, DEFAULT_REGIONS), [tripIslands]);
+  // Botones de un toque: vuestras islas; y mientras no haya ninguna, las regiones más comunes
+  const islandChips = tripIslands.length > 0 ? tripIslands : DEFAULT_REGIONS.slice(0, 8);
 
   // Map Pin Form State
   const [editingMapPinId, setEditingMapPinId] = useState<string | null>(null);
@@ -125,7 +164,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     const result = await onLogin(pinInput);
     setIsLoggingIn(false);
     if (result === 'ok') {
-      setIsAuthenticated(true);
+      setPinInput(''); // la contraseña no se queda en memoria: a partir de aquí vale la llave de sesión
       return;
     }
     setPinError({
@@ -193,7 +232,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                 : 'Aquí solo se pueden subir fotos. Los vídeos van en el campo "Vídeo" o en las Historias.'
             );
           }
-          const { url, kind } = await uploadMedia(file, pinInput, (fraction) =>
+          const { url, kind } = await uploadMedia(file, adminToken ?? '', (fraction) =>
             setUploadProgress((p) => ({ ...p, percent: Math.round(fraction * 100) }))
           );
           if (target === 'cover') setPostCoverImage(url);
@@ -526,12 +565,25 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
             </div>
           </div>
 
-          <button
-            onClick={onClose}
-            className="p-2 rounded-full bg-white/10 text-white hover:bg-white/20"
-          >
-            <X className="h-5 w-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {isAuthenticated && (
+              <button
+                onClick={onLogout}
+                title="Cerrar sesión en este dispositivo"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-white/10 text-emerald-100 hover:bg-white/20 text-xs font-medium"
+              >
+                <LogOut className="h-4 w-4" />
+                <span className="hidden sm:inline">Cerrar sesión</span>
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              title="Cerrar el panel (la sesión sigue abierta)"
+              className="p-2 rounded-full bg-white/10 text-white hover:bg-white/20"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
         </div>
 
         {/* Auth Check Lock Screen */}
@@ -579,6 +631,13 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
           /* Authenticated Dashboard Body */
           <div className="p-6 sm:p-8 space-y-6">
             
+            {/* Sugerencias de isla/región para el post y para las paradas de la ruta */}
+            <datalist id="island-options">
+              {islandOptions.map((name) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
+
             {/* Notification Banner */}
             {notification && (
               <div className="p-3 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-sm font-semibold flex items-center gap-2 animate-fadeIn">
@@ -674,19 +733,33 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
                   <div>
                     <label className="block text-xs font-medium text-emerald-200 mb-1">Isla / Región *</label>
-                    <select
+                    <input
+                      type="text"
+                      list="island-options"
+                      required
+                      placeholder="Elige una o escribe otra"
                       value={postIsland}
                       onChange={(e) => setPostIsland(e.target.value)}
                       className="w-full px-4 py-2.5 rounded-xl bg-black/50 border border-white/15 text-white text-sm focus:outline-none focus:border-[#E07A5F]"
-                    >
-                      <option value="Bali">Bali</option>
-                      <option value="Nusa Penida">Nusa Penida</option>
-                      <option value="Lombok">Lombok</option>
-                      <option value="Sumbawa">Sumbawa</option>
-                      <option value="Flores (Komodo)">Flores (Komodo)</option>
-                      <option value="Mar de Banda (Remoto)">Mar de Banda (Banda Neira & Hatta)</option>
-                      <option value="Java">Java</option>
-                    </select>
+                    />
+                    {islandChips.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {islandChips.map((name) => (
+                          <button
+                            key={name}
+                            type="button"
+                            onClick={() => setPostIsland(name)}
+                            className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-all ${
+                              postIsland.trim().toLowerCase() === name.toLowerCase()
+                                ? 'bg-[#E07A5F] text-white'
+                                : 'bg-white/10 text-emerald-100 hover:bg-white/15'
+                            }`}
+                          >
+                            {name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1085,6 +1158,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                       <label className="block text-xs font-medium text-emerald-200 mb-1">Isla o Región *</label>
                       <input
                         type="text"
+                        list="island-options"
                         placeholder="Ej: Java"
                         value={mapPinIsland}
                         onChange={(e) => setMapPinIsland(e.target.value)}
