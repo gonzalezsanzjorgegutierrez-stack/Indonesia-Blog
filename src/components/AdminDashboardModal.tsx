@@ -88,6 +88,11 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const [mapPinLat, setMapPinLat] = useState<number>(-5.0);
   const [mapPinLng, setMapPinLng] = useState<number>(118.0);
   const [mapPinStatus, setMapPinStatus] = useState<'upcoming' | 'current' | 'visited'>('upcoming');
+  const [mapPinPlaced, setMapPinPlaced] = useState(false); // ¿ya se ha colocado el punto en el mapa?
+  const [placeQuery, setPlaceQuery] = useState('');
+  const [placeResults, setPlaceResults] = useState<{ label: string; lat: number; lng: number }[]>([]);
+  const [placeMessage, setPlaceMessage] = useState('');
+  const [isSearchingPlace, setIsSearchingPlace] = useState(false);
 
   // Story Form State
   const [storyTitle, setStoryTitle] = useState('');
@@ -332,6 +337,11 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const handleSaveMapPin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!mapPinName.trim() || !mapPinIsland.trim()) return;
+    // Sin este aviso, un punto sin colocar se guardaba en una posición cualquiera (en el mar)
+    if (!mapPinPlaced) {
+      alert('Antes de guardar, coloca la parada en el mapa: busca el lugar o toca el mapa.');
+      return;
+    }
 
     const newPin: IslandPin = {
       id: editingMapPinId || `pin-${Date.now()}`,
@@ -366,6 +376,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     setMapPinLat(pin.lat);
     setMapPinLng(pin.lng);
     setMapPinStatus(pin.status);
+    setMapPinPlaced(true);
     setActiveTab('map');
   };
 
@@ -385,10 +396,41 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     setMapPinLat(-5.0);
     setMapPinLng(118.0);
     setMapPinStatus('upcoming');
+    setMapPinPlaced(false);
+    setPlaceQuery('');
+    setPlaceResults([]);
+    setPlaceMessage('');
+    markerRef.current?.remove();
+    markerRef.current = null;
   };
 
   // Leaflet Map Picker Initialization
   const mapInstanceRef = useRef<L.Map | null>(null);
+  const markerRef = useRef<L.Marker | null>(null);
+
+  // Coloca (o mueve) el punto de la parada y guarda sus coordenadas.
+  // El punto no existe hasta que se coloca: antes se guardaba uno "por defecto" en el mar.
+  const placePoint = (lat: number, lng: number, zoom?: number) => {
+    setMapPinLat(Number(lat.toFixed(4)));
+    setMapPinLng(Number(lng.toFixed(4)));
+    setMapPinPlaced(true);
+
+    const map = mapInstanceRef.current;
+    if (!map) return;
+    if (markerRef.current) {
+      markerRef.current.setLatLng([lat, lng]);
+    } else {
+      const marker = L.marker([lat, lng], { draggable: true }).addTo(map);
+      marker.on('dragend', () => {
+        const p = marker.getLatLng();
+        setMapPinLat(Number(p.lat.toFixed(4)));
+        setMapPinLng(Number(p.lng.toFixed(4)));
+        setMapPinPlaced(true);
+      });
+      markerRef.current = marker;
+    }
+    if (zoom) map.setView([lat, lng], zoom);
+  };
 
   useEffect(() => {
     if (activeTab !== 'map') return;
@@ -402,9 +444,12 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       if (mapInstanceRef.current) {
         mapInstanceRef.current.remove();
         mapInstanceRef.current = null;
+        markerRef.current = null;
       }
 
-      const map = L.map('admin-map-picker').setView([mapPinLat, mapPinLng], 5);
+      // Parada nueva: vista de Java y Bali · parada existente: centrada en su punto
+      const start: L.LatLngTuple = editingMapPinId ? [mapPinLat, mapPinLng] : [-7.5, 112];
+      const map = L.map('admin-map-picker').setView(start, editingMapPinId ? 8 : 5);
       mapInstanceRef.current = map;
 
       L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -412,23 +457,9 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
         attribution: '&copy; OpenStreetMap'
       }).addTo(map);
 
-      const marker = L.marker([mapPinLat, mapPinLng], { draggable: true }).addTo(map);
-
-      // On map click, move marker and update coordinates
-      map.on('click', (e) => {
-        const { lat, lng } = e.latlng;
-        marker.setLatLng([lat, lng]);
-        setMapPinLat(Number(lat.toFixed(4)));
-        setMapPinLng(Number(lng.toFixed(4)));
-      });
-
-      // On marker drag, update coordinates
-      marker.on('dragend', (e) => {
-        const m = e.target;
-        const { lat, lng } = m.getLatLng();
-        setMapPinLat(Number(lat.toFixed(4)));
-        setMapPinLng(Number(lng.toFixed(4)));
-      });
+      // Al tocar el mapa se coloca (o se mueve) el punto
+      map.on('click', (e) => placePoint(e.latlng.lat, e.latlng.lng));
+      if (editingMapPinId) placePoint(mapPinLat, mapPinLng);
 
       // Fix missing map tiles due to modal display change
       map.invalidateSize();
@@ -442,8 +473,37 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
         mapInstanceRef.current.remove();
         mapInstanceRef.current = null;
       }
+      markerRef.current = null;
     };
   }, [activeTab, editingMapPinId]);
+
+  // Busca un lugar por su nombre (OpenStreetMap Nominatim, gratuito y sin clave)
+  const handleSearchPlace = async () => {
+    const query = placeQuery.trim();
+    if (!query) return;
+    setIsSearchingPlace(true);
+    setPlaceMessage('');
+    setPlaceResults([]);
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&accept-language=es&q=${encodeURIComponent(query)}`
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { display_name: string; lat: string; lon: string }[];
+      if (data.length === 0) setPlaceMessage('No se encontró ese sitio. Prueba con otro nombre, o toca el mapa.');
+      setPlaceResults(data.map((d) => ({ label: d.display_name, lat: Number(d.lat), lng: Number(d.lon) })));
+    } catch {
+      setPlaceMessage('No se pudo buscar ahora mismo. Toca el mapa para colocar el punto.');
+    } finally {
+      setIsSearchingPlace(false);
+    }
+  };
+
+  const handleChoosePlace = (place: { label: string; lat: number; lng: number }) => {
+    placePoint(place.lat, place.lng, 11);
+    setPlaceResults([]);
+    setPlaceMessage(`Punto colocado en: ${place.label}`);
+  };
   // ------------------------------
 
   return (
@@ -1057,17 +1117,65 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                     </div>
                   </div>
 
-                  {/* Leaflet Map Picker */}
+                  {/* Buscador de lugar + mapa */}
                   <div className="space-y-2">
                     <label className="block text-xs font-medium text-emerald-200">
-                      Ubicación Exacta (Haz clic en el mapa o arrastra el marcador)
+                      Ubicación exacta: busca el lugar o toca el mapa
                     </label>
-                    <div className="relative h-64 w-full rounded-2xl overflow-hidden border border-white/20">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="Ej: Yakarta, Sanur, Nusa Penida..."
+                        value={placeQuery}
+                        onChange={(e) => setPlaceQuery(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleSearchPlace();
+                          }
+                        }}
+                        className="flex-1 min-w-0 px-4 py-2.5 rounded-xl bg-black/50 border border-white/15 text-white text-sm focus:outline-none focus:border-[#E07A5F]"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleSearchPlace}
+                        disabled={isSearchingPlace}
+                        className="px-4 py-2.5 rounded-xl bg-[#2A9D8F] text-white text-xs font-semibold hover:brightness-110 disabled:opacity-60"
+                      >
+                        {isSearchingPlace ? 'Buscando…' : 'Buscar'}
+                      </button>
+                    </div>
+
+                    {placeMessage && <p className="text-xs text-emerald-300/80">{placeMessage}</p>}
+
+                    {placeResults.length > 0 && (
+                      <ul className="rounded-xl border border-white/15 divide-y divide-white/10 overflow-hidden bg-black/40">
+                        {placeResults.map((r, i) => (
+                          <li key={`${r.lat}-${r.lng}-${i}`}>
+                            <button
+                              type="button"
+                              onClick={() => handleChoosePlace(r)}
+                              className="w-full text-left px-4 py-2.5 text-xs text-emerald-100 hover:bg-white/10"
+                            >
+                              {r.label}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+
+                    <div className="relative h-72 w-full rounded-2xl overflow-hidden border border-white/20">
                       <div id="admin-map-picker" className="h-full w-full z-10" />
                     </div>
                     <div className="flex gap-4 text-xs text-emerald-300/60">
-                      <span>Lat: {mapPinLat}</span>
-                      <span>Lng: {mapPinLng}</span>
+                      {mapPinPlaced ? (
+                        <>
+                          <span>Lat: {mapPinLat}</span>
+                          <span>Lng: {mapPinLng}</span>
+                        </>
+                      ) : (
+                        <span className="text-[#E9C46A]">Todavía no has colocado el punto</span>
+                      )}
                     </div>
                   </div>
 
