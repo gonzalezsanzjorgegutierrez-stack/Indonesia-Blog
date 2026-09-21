@@ -53,6 +53,15 @@ export const DiveLogbook: React.FC<DiveLogbookProps> = ({
   const siteOptions = useMemo(() => unique([...dives.map((d) => d.site), ...KNOWN_SITES]), [dives]);
   const editingDive = editingId ? dives.find((d) => d.id === editingId) : undefined;
 
+  // Puntos de buceo de VUESTRAS inmersiones (los más recientes primero): los de la isla elegida, o todos si aún no hay ninguno
+  const ownSites = useMemo(() => {
+    const island = form.island.trim().toLowerCase();
+    const inIsland = unique(sorted.filter((d) => d.island.trim().toLowerCase() === island).map((d) => d.site));
+    return inIsland.length > 0 ? inIsland : unique(sorted.map((d) => d.site));
+  }, [sorted, form.island]);
+  const siteTyped = form.site.trim();
+  const isNewSite = siteTyped !== "" && !siteOptions.some((s) => s.toLowerCase() === siteTyped.toLowerCase());
+
   const set = <K extends keyof DiveForm>(key: K, value: DiveForm[K]) => {
     setDirty(true);
     setForm((f) => ({ ...f, [key]: value }));
@@ -72,13 +81,17 @@ export const DiveLogbook: React.FC<DiveLogbookProps> = ({
     setEditingId(null);
     setDirty(false);
     setError('');
+    setCustomSpecies('');
     setForm(emptyForm(list, defaultIsland));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSaving) return;
-    const result = buildDive(form, editingId ?? `dive-${Date.now()}`, editingDive?.createdAt);
+    // Si hay una especie escrita en "Otra especie" sin pulsar Añadir, se incluye (antes se perdía en silencio)
+    const pendingSpecies = customSpecies.trim();
+    const formToSave = pendingSpecies ? { ...form, wildlife: [...form.wildlife, pendingSpecies] } : form;
+    const result = buildDive(formToSave, editingId ?? `dive-${Date.now()}`, editingDive?.createdAt);
     if ('error' in result) {
       setError(result.error);
       return;
@@ -256,7 +269,30 @@ export const DiveLogbook: React.FC<DiveLogbookProps> = ({
             </div>
             <div>
               <label className={labelClass} htmlFor="dive-site">Punto de buceo *</label>
-              <input id="dive-site" type="text" list="dive-site-options" placeholder="Ej: Manta Point" className={inputClass} value={form.site} onChange={(e) => set('site', e.target.value)} />
+              <input id="dive-site" type="text" list="dive-site-options" placeholder="Elige uno o escribe el tuyo" autoComplete="off" className={inputClass} value={form.site} onChange={(e) => set('site', e.target.value)} />
+              <p className="mt-1 text-[11px] text-emerald-300/60">No hace falta que esté en la lista: escribe el nombre que quieras.</p>
+              {isNewSite && (
+                <p role="status" className="mt-1 text-[11px] font-medium text-[#E9C46A]">
+                  ✓ «{siteTyped}» es un punto nuevo: se guardará y os saldrá como sugerencia la próxima vez.
+                </p>
+              )}
+              {ownSites.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                  <span className="text-[11px] text-emerald-300/60">Vuestros puntos:</span>
+                  {ownSites.slice(0, 8).map((name) => (
+                    <button
+                      key={name}
+                      type="button"
+                      onClick={() => set('site', name)}
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-all ${
+                        siteTyped.toLowerCase() === name.toLowerCase() ? 'bg-[#2A9D8F] text-white' : 'bg-white/10 text-emerald-100 hover:bg-white/15'
+                      }`}
+                    >
+                      {name}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <div>
               <label className={labelClass} htmlFor="dive-center">Centro de buceo / barco</label>
@@ -391,7 +427,7 @@ export const DiveLogbook: React.FC<DiveLogbookProps> = ({
           <div className="flex gap-2">
             <input
               type="text"
-              placeholder="Otra especie…"
+              placeholder="Otra especie… (se añade también al guardar)"
               aria-label="Otra especie"
               className={inputClass}
               value={customSpecies}
