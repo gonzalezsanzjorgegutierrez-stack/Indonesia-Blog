@@ -2,10 +2,10 @@ import { useState, useEffect, useMemo } from 'react';
 import { normalizeStats, readLocalBlogData } from './utils/storage';
 import {
   fetchRemoteData, login, checkSession, logoutSession, saveData, upsertItem, upsertItems, removeItem,
-  likePost, addComment, deleteComment,
+  likePost, addComment, deleteComment, listDives,
   type RemoteData, type LoginResult, type ApiResult,
 } from './utils/api';
-import type { Post, Story, IslandPin, TripStats, Tip, Comment } from './types/blog';
+import type { Post, Story, IslandPin, TripStats, Tip, Comment, Dive } from './types/blog';
 import { initialTips, initialPosts, initialStories, initialIslandPins, initialStats } from './data/initialData';
 import { Navbar } from './components/Navbar';
 import { HeroBanner } from './components/HeroBanner';
@@ -43,6 +43,8 @@ export default function App() {
   const [likes, setLikes] = useState<Record<string, number>>({});
   const [comments, setComments] = useState<Record<string, Comment[]>>({});
   const [tips] = useState<Tip[]>(initialTips);
+  // Logbook de buceo: PRIVADO. Solo se pide al servidor con la sesión iniciada y nunca sale en la lectura pública.
+  const [dives, setDives] = useState<Dive[]>([]);
 
   const [activeSection, setActiveSection] = useState<string>('inicio');
   const [selectedIsland, setSelectedIsland] = useState<string | null>(null);
@@ -101,7 +103,11 @@ export default function App() {
 
   // Guarda en el servidor y dice si ha salido bien. Si falla, avisa y vuelve a cargar lo que HAY
   // guardado de verdad, para que la pantalla nunca enseñe posts o cambios que no existen.
-  const persist = async <T,>(job: Promise<ApiResult<T>>, onSaved?: (data: T) => void): Promise<boolean> => {
+  const persist = async <T,>(
+    job: Promise<ApiResult<T>>,
+    onSaved?: (data: T) => void,
+    onFailed?: () => void
+  ): Promise<boolean> => {
     const result = await job;
     if (result.ok) {
       onSaved?.(result.data);
@@ -115,6 +121,7 @@ export default function App() {
       warnSaveFailed(result.error);
     }
     await refreshData();
+    onFailed?.();
     return false;
   };
 
@@ -172,6 +179,40 @@ export default function App() {
       }
     });
   }, []);
+
+  // Logbook: se carga al iniciar sesión y se vacía al cerrarla
+  const loadDives = async (token: string) => {
+    const result = await listDives(token);
+    if (result.ok) setDives(result.data.items);
+    else if (result.status === 401) clearSession();
+  };
+
+  useEffect(() => {
+    if (!adminToken) {
+      setDives([]);
+      return;
+    }
+    void loadDives(adminToken);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminToken]);
+
+  const handleSaveDive = (dive: Dive) => {
+    setDives((prev) => (prev.some((d) => d.id === dive.id) ? prev.map((d) => (d.id === dive.id ? dive : d)) : [dive, ...prev]));
+    return persist(
+      upsertItem<Dive>('dives', dive, adminToken ?? ''),
+      (d) => setDives(d.items),
+      () => adminToken && void loadDives(adminToken)
+    );
+  };
+
+  const handleDeleteDive = (diveId: string) => {
+    setDives((prev) => prev.filter((d) => d.id !== diveId));
+    return persist(
+      removeItem<Dive>('dives', diveId, adminToken ?? ''),
+      (d) => setDives(d.items),
+      () => adminToken && void loadDives(adminToken)
+    );
+  };
 
   const handleSaveIslandPins = (pins: IslandPin[]) => {
     setIslandPins(pins);
@@ -461,6 +502,9 @@ export default function App() {
           commentsMap={comments}
           onDeleteComment={handleDeleteComment}
           adminToken={adminToken}
+          dives={dives}
+          onSaveDive={handleSaveDive}
+          onDeleteDive={handleDeleteDive}
           onLogin={handleAdminLogin}
           onLogout={handleAdminLogout}
           onPublishLocalData={handlePublishLocalData}

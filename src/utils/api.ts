@@ -1,4 +1,4 @@
-import type { Post, Story, IslandPin, TripStats, Comment } from '../types/blog';
+import type { Post, Story, IslandPin, TripStats, Comment, Dive } from '../types/blog';
 
 const ENDPOINT = '/api/blog';
 
@@ -11,8 +11,9 @@ export interface RemoteData {
   comments: Record<string, Comment[]>;
 }
 
-export type ListKey = 'posts' | 'stories';
-export type DataKey = ListKey | 'islandPins' | 'stats';
+export type ListKey = 'posts' | 'stories' | 'dives';
+// `dives` (logbook privado) no se guarda con `saveData`: solo con upsertItem/removeItem
+export type DataKey = 'posts' | 'stories' | 'islandPins' | 'stats';
 
 export type ApiResult<T> =
   | { ok: true; data: T }
@@ -80,6 +81,9 @@ export const upsertItems = <T>(key: ListKey, items: T[], token: string) =>
 
 export const removeItem = <T>(key: ListKey, id: string, token: string) =>
   call<{ items: T[] }>({ action: 'remove', key, id }, token);
+
+/** Logbook privado: solo se puede leer con la sesión de la pareja. */
+export const listDives = (token: string) => call<{ items: Dive[] }>({ action: 'listDives' }, token);
 
 export const likePost = (postId: string) =>
   call<{ likes: number }>({ action: 'like', postId });

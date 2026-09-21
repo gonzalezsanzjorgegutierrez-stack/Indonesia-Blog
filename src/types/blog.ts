@@ -75,3 +75,34 @@ export interface TripStats {
   blogTitle?: string;
   authorName?: string;
 }
+
+/** Una inmersión del logbook de buceo (privado: solo se ve en Zona Pareja). */
+export type DiveCurrent = 'ninguna' | 'suave' | 'moderada' | 'fuerte';
+
+export interface Dive {
+  id: string;
+  number: number; // nº de inmersión en el logbook
+  date: string; // YYYY-MM-DD
+  timeIn?: string; // HH:MM
+  site: string; // punto de buceo
+  island: string; // isla / región (mismos nombres que las paradas de la ruta)
+  diveCenter?: string; // centro de buceo / barco
+  buddy?: string; // guía / compañero
+  maxDepth?: number; // m
+  avgDepth?: number; // m
+  bottomTime?: number; // min
+  waterTemp?: number; // °C
+  visibility?: number; // m
+  current?: DiveCurrent;
+  gas?: 'aire' | 'nitrox';
+  nitroxPct?: number;
+  pressureStart?: number; // bar
+  pressureEnd?: number; // bar
+  weight?: number; // kg
+  exposure?: string; // traje
+  wildlife: string[]; // vida marina vista
+  rating?: number; // 1-5
+  notes?: string;
+  photos: string[];
+  createdAt: string;
+}

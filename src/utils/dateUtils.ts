@@ -22,3 +22,7 @@ export const calculateCurrentDay = (tripStartDate?: string): number => {
 export const getTodayISO = (): string => {
   return new Date().toISOString().slice(0, 10);
 };
+
+/** Fecha de hoy en la zona horaria del dispositivo (YYYY-MM-DD). Con UTC, en Bali de madrugada saldría "ayer". */
+export const localDateISO = (d: Date = new Date()): string =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;

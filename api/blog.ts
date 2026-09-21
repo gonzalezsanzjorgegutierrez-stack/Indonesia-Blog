@@ -32,9 +32,12 @@ const KEYS = {
   stories: 'blog:stories',
   islandPins: 'blog:pins',
   stats: 'blog:stats',
+  // PRIVADO: el logbook de buceo de la pareja. Nunca va en la lectura pública (readAll) ni se puede
+  // sobrescribir con `save`: solo se lee con `listDives` y se escribe con `upsert`/`remove`, todo con sesión.
+  dives: 'blog:dives',
 } as const;
-type DataKey = keyof typeof KEYS;
-type ListKey = 'posts' | 'stories';
+type DataKey = Exclude<keyof typeof KEYS, 'dives'>;
+type ListKey = 'posts' | 'stories' | 'dives';
 
 const LIKES_KEY = 'blog:likes';
 const commentsKey = (postId: string) => `blog:comments:${postId}`;
@@ -203,13 +206,101 @@ async function allow(bucket: string, ip: string, limit: number, windowSec: numbe
 
 // ---------- Datos ----------
 
-const isDataKey = (key: unknown): key is DataKey => typeof key === 'string' && key in KEYS;
-const isListKey = (key: unknown): key is ListKey => key === 'posts' || key === 'stories';
+const isDataKey = (key: unknown): key is DataKey => typeof key === 'string' && key in KEYS && key !== 'dives';
+const isListKey = (key: unknown): key is ListKey => key === 'posts' || key === 'stories' || key === 'dives';
 
 async function readList(key: ListKey): Promise<Item[]> {
   const [raw] = await pipeline([['GET', KEYS[key]]]);
   const list = parseJson<Item[]>(raw);
   return Array.isArray(list) ? list : [];
+}
+
+// ---------- Logbook de buceo (privado) ----------
+
+const DIVE_CURRENTS = ['ninguna', 'suave', 'moderada', 'fuerte'];
+const DIVE_GASES = ['aire', 'nitrox'];
+
+/**
+ * Valida y limpia una inmersión antes de guardarla. Devuelve null si algo no cuadra (fecha rara, número
+ * fuera de rango, campo obligatorio vacío...): así ningún dato absurdo llega a la base de datos.
+ */
+function sanitizeDive(raw: unknown): Item | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const d = raw as Record<string, unknown>;
+  let invalid = false;
+
+  const text = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+  // Vacío = "no rellenado" (se omite); fuera de rango o no numérico = inválido
+  const num = (v: unknown, min: number, max: number): number | undefined => {
+    if (v === undefined || v === null || v === '') return undefined;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < min || n > max) {
+      invalid = true;
+      return undefined;
+    }
+    return n;
+  };
+  const oneOf = (v: unknown, allowed: string[]): string | undefined =>
+    typeof v === 'string' && allowed.includes(v) ? v : undefined;
+
+  if (typeof d.id !== 'string' || !ID_RE.test(d.id)) return null;
+  const date = text(d.date, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) return null;
+  const site = text(d.site, 120);
+  const island = text(d.island, 80);
+  if (!site || !island) return null;
+
+  const timeIn = text(d.timeIn, 5);
+  if (timeIn && !/^([01]\d|2[0-3]):[0-5]\d$/.test(timeIn)) return null;
+
+  const wildlife = Array.isArray(d.wildlife)
+    ? [...new Set(d.wildlife.map((w) => text(w, 60)).filter(Boolean))].slice(0, 60)
+    : [];
+  const photos = Array.isArray(d.photos)
+    ? d.photos.filter((p): p is string => typeof p === 'string' && /^https:\/\/\S{1,500}$/.test(p)).slice(0, 20)
+    : [];
+
+  const dive: Item = {
+    id: d.id,
+    number: num(d.number, 1, 99999) ?? 1,
+    date,
+    site,
+    island,
+    wildlife,
+    photos,
+    createdAt: text(d.createdAt, 40) || new Date().toISOString(),
+  };
+  // Opcionales: solo se guardan si vienen rellenados
+  const optional: Record<string, unknown> = {
+    timeIn: timeIn || undefined,
+    diveCenter: text(d.diveCenter, 100) || undefined,
+    buddy: text(d.buddy, 100) || undefined,
+    exposure: text(d.exposure, 60) || undefined,
+    notes: text(d.notes, 4000) || undefined,
+    maxDepth: num(d.maxDepth, 0, 200),
+    avgDepth: num(d.avgDepth, 0, 200),
+    bottomTime: num(d.bottomTime, 1, 1000),
+    waterTemp: num(d.waterTemp, 0, 40),
+    visibility: num(d.visibility, 0, 100),
+    pressureStart: num(d.pressureStart, 0, 400),
+    pressureEnd: num(d.pressureEnd, 0, 400),
+    weight: num(d.weight, 0, 40),
+    nitroxPct: num(d.nitroxPct, 21, 100),
+    rating: num(d.rating, 1, 5),
+    current: oneOf(d.current, DIVE_CURRENTS),
+    gas: oneOf(d.gas, DIVE_GASES),
+  };
+  for (const [k, v] of Object.entries(optional)) if (v !== undefined) dive[k] = v;
+
+  // La profundidad media no puede superar la máxima
+  if (
+    typeof dive.maxDepth === 'number' &&
+    typeof dive.avgDepth === 'number' &&
+    dive.avgDepth > dive.maxDepth
+  ) {
+    return null;
+  }
+  return invalid ? null : dive;
 }
 
 async function postExists(postId: string): Promise<boolean> {
@@ -327,7 +418,7 @@ export default async function handler(req: Req, res: Res) {
         if (!(await requireAdmin(body, res, ip))) return;
         const { key } = body;
         // Un elemento (`item`) o varios a la vez (`items`, p. ej. las fotos de una historia)
-        const incoming = (Array.isArray(body.items) ? body.items : body.item ? [body.item] : []) as Item[];
+        let incoming = (Array.isArray(body.items) ? body.items : body.item ? [body.item] : []) as Item[];
         if (
           !isListKey(key) ||
           incoming.length === 0 ||
@@ -336,6 +427,15 @@ export default async function handler(req: Req, res: Res) {
         ) {
           res.status(400).json({ error: 'Datos no válidos' });
           return;
+        }
+        // Las inmersiones se validan campo a campo antes de guardarlas
+        if (key === 'dives') {
+          const cleaned = incoming.map(sanitizeDive);
+          if (cleaned.some((d) => d === null)) {
+            res.status(400).json({ error: 'Los datos de la inmersión no son válidos' });
+            return;
+          }
+          incoming = cleaned as Item[];
         }
         const list = await readList(key);
         const byId = new Map(incoming.map((i) => [i.id, i]));
@@ -350,6 +450,13 @@ export default async function handler(req: Req, res: Res) {
         }
         await pipeline([['SET', KEYS[key], json]]);
         res.status(200).json({ ok: true, items });
+        return;
+      }
+
+      // Logbook privado: solo se lee con la sesión de la pareja (nunca sale en la lectura pública)
+      case 'listDives': {
+        if (!(await requireAdmin(body, res, ip))) return;
+        res.status(200).json({ ok: true, items: await readList('dives') });
         return;
       }
 

@@ -1,4 +1,4 @@
-import type { Post, Story, IslandPin, TripStats } from '../types/blog';
+import type { Post, Story, IslandPin, TripStats, Dive } from '../types/blog';
 import { calculateCurrentDay } from './dateUtils';
 
 // Los datos del blog viven ahora en el servidor (ver api/blog.ts).
@@ -41,6 +41,7 @@ export interface BlogBackup {
   stories: Story[];
   islandPins: IslandPin[];
   stats: TripStats;
+  dives: Dive[];
 }
 
 export const exportAllBlogData = (data: BlogBackup) => {
@@ -49,6 +50,7 @@ export const exportAllBlogData = (data: BlogBackup) => {
     stories: data.stories,
     islands: data.islandPins,
     stats: data.stats,
+    dives: data.dives,
     exportedAt: new Date().toISOString(),
   };
 

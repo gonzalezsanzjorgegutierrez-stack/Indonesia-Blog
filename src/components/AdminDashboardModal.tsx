@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import L from 'leaflet';
-import type { Post, Story, IslandPin, TripStats, Comment } from '../types/blog';
+import type { Post, Story, IslandPin, TripStats, Comment, Dive } from '../types/blog';
+import { DiveLogbook } from './DiveLogbook';
 import type { LoginResult } from '../utils/api';
 import { 
   X, Lock, KeyRound, Plus, Edit, Trash2, Save, Upload, MapPin, 
-  Film, Settings, Download, RefreshCw, CheckCircle2, LogOut
+  Film, Settings, Download, RefreshCw, CheckCircle2, LogOut, Waves
 } from 'lucide-react';
 import { exportAllBlogData, readLocalBlogData } from '../utils/storage';
 import { uploadMedia, formatImageUrl, MAX_VIDEO_MB } from '../utils/media';
@@ -49,6 +50,10 @@ interface AdminDashboardModalProps {
   // Llave de sesión (null = no ha entrado). Vive en la aplicación, no en este panel, para que
   // cerrar y volver a abrir el panel no pida la contraseña otra vez
   adminToken: string | null;
+  // Logbook de buceo (privado)
+  dives: Dive[];
+  onSaveDive: (dive: Dive) => Promise<boolean>;
+  onDeleteDive: (id: string) => Promise<boolean>;
   onLogin: (pin: string) => Promise<LoginResult>;
   onLogout: () => void;
   onPublishLocalData: () => Promise<boolean>;
@@ -70,6 +75,9 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   commentsMap,
   onDeleteComment,
   adminToken,
+  dives,
+  onSaveDive,
+  onDeleteDive,
   onLogin,
   onLogout,
   onPublishLocalData,
@@ -86,7 +94,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       ? `Subiendo ${uploadProgress.index}/${uploadProgress.total} · ${uploadProgress.percent}%`
       : `Subiendo ${uploadProgress.percent}%`;
 
-  const [activeTab, setActiveTab] = useState<'posts' | 'stories' | 'manage_posts' | 'map' | 'stats'>('posts');
+  const [activeTab, setActiveTab] = useState<'posts' | 'stories' | 'manage_posts' | 'map' | 'dives' | 'stats'>('posts');
 
   // New/Editing Post Form State
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
@@ -111,8 +119,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   // Islas de vuestro viaje (paradas de la ruta + posts ya publicados) y sugerencias completas.
   // El mapa filtra el diario comparando estos nombres, así que conviene reutilizar los mismos.
   const tripIslands = useMemo(
-    () => uniqueNames(islandPins.map((p) => p.island), posts.map((p) => p.island)),
-    [islandPins, posts]
+    () => uniqueNames(islandPins.map((p) => p.island), posts.map((p) => p.island), dives.map((d) => d.island)),
+    [islandPins, posts, dives]
   );
   const islandOptions = useMemo(() => uniqueNames(tripIslands, DEFAULT_REGIONS), [tripIslands]);
   // Botones de un toque: vuestras islas; y mientras no haya ninguna, las regiones más comunes
@@ -686,6 +694,16 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
               >
                 <MapPin className="h-4 w-4" />
                 <span>Gestionar Ruta</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('dives')}
+                className={`flex-1 min-w-[120px] py-2.5 px-4 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
+                  activeTab === 'dives' ? 'bg-[#2A9D8F] text-white shadow-lg' : 'text-emerald-200/70 hover:text-white'
+                }`}
+              >
+                <Waves className="h-4 w-4" />
+                <span>Logbook de Buceo{dives.length > 0 ? ` (${dives.length})` : ''}</span>
               </button>
 
               <button
@@ -1346,6 +1364,19 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
               </div>
             )}
 
+            {/* Tab: LOGBOOK DE BUCEO (privado) */}
+            {activeTab === 'dives' && adminToken && (
+              <DiveLogbook
+                dives={dives}
+                adminToken={adminToken}
+                defaultIsland={islandPins.find((p) => p.status === 'current')?.island ?? posts[0]?.island ?? ''}
+                islandSuggestions={tripIslands}
+                onSave={onSaveDive}
+                onDelete={onDeleteDive}
+                notify={showNotice}
+              />
+            )}
+
             {/* Tab 5: STATS & BACKUP */}
             {activeTab === 'stats' && (
               <div className="space-y-6">
@@ -1510,7 +1541,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
                   <div className="flex flex-wrap gap-4">
                     <button
-                      onClick={() => exportAllBlogData({ posts, stories, islandPins, stats })}
+                      onClick={() => exportAllBlogData({ posts, stories, islandPins, stats, dives })}
                       className="px-5 py-3 rounded-2xl bg-[#2A9D8F] text-white font-semibold text-xs flex items-center gap-2 shadow-md hover:scale-105 transition-all"
                     >
                       <Download className="h-4 w-4" />
