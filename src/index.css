@@ -90,6 +90,49 @@ html, body {
   margin: 12px 14px;
 }
 
+/* Flecha animada del recorrido en el mapa (ver IndonesiaMap.tsx) */
+.route-plane-icon {
+  background: transparent;
+}
+.route-plane-outer {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.route-plane-rotator {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.6));
+  transition: transform 0.08s linear;
+}
+.route-plane-halo {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: rgba(233, 196, 106, 0.55);
+  opacity: 0;
+}
+.route-plane-outer.is-paused .route-plane-halo {
+  animation: route-plane-pulse 1.1s ease-out infinite;
+}
+@keyframes route-plane-pulse {
+  0% { opacity: 0.55; transform: scale(0.6); }
+  70% { opacity: 0; transform: scale(2.6); }
+  100% { opacity: 0; transform: scale(2.6); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .route-plane-outer.is-paused .route-plane-halo {
+    animation: none;
+  }
+}
+
 /* Text Gradient */
 .text-gradient-gold {
   background: linear-gradient(135deg, #F4A261 0%, #E07A5F 50%, #E76F51 100%);
