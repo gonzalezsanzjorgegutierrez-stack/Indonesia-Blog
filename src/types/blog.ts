@@ -51,6 +51,8 @@ export interface IslandPin {
   dates: string;
   status: 'visited' | 'current' | 'upcoming';
   coverImage?: string;
+  /** Orden de la parada en la ruta (1, 2, 3...). Si falta (paradas antiguas), se usa su posición en la lista. */
+  order?: number;
 }
 
 export interface Tip {

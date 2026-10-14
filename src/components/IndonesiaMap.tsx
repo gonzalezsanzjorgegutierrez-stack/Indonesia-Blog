@@ -1,8 +1,9 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import type { IslandPin } from '../types/blog';
 import { Navigation, Calendar, Eye, CheckCircle2 } from 'lucide-react';
 import L from 'leaflet';
-import { buildRouteSchedule, frameAt, type LatLng, type RouteFrame } from '../utils/geo';
+import { buildArc } from '../utils/geo';
+import { sortByOrder } from '../utils/route';
 
 interface IndonesiaMapProps {
   islandPins: IslandPin[];
@@ -10,23 +11,33 @@ interface IndonesiaMapProps {
   onSelectIsland: (islandName: string | null) => void;
 }
 
-// Flecha/dardo apuntando al norte (0°) por defecto: al rotarla según el rumbo del tramo, apunta
-// siempre hacia donde se dirige.
+// Flecha/dardo apuntando al norte (0°) por defecto: al rotarla según el rumbo de llegada del arco,
+// apunta siempre hacia la parada a la que llega.
 const ROUTE_ARROW_SVG = `
-  <svg width="22" height="22" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <svg width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
     <path d="M12 2.5 L18.5 20.5 L12 16.8 L5.5 20.5 Z" fill="#E9C46A" stroke="#071713" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" />
   </svg>
 `;
 
-/** Mueve la flecha del recorrido a la posición/rumbo del fotograma, sin recrear el icono cada vez. */
-const applyRouteFrame = (marker: L.Marker, frame: RouteFrame) => {
-  marker.setLatLng([frame.position.lat, frame.position.lng]);
-  const el = marker.getElement();
-  if (!el) return;
-  const rotator = el.querySelector<HTMLElement>('.route-plane-rotator');
-  if (rotator) rotator.style.transform = `rotate(${frame.bearing}deg)`;
-  const outer = el.querySelector<HTMLElement>('.route-plane-outer');
-  if (outer) outer.classList.toggle('is-paused', frame.paused);
+/** Dibuja un arco fijo (estilo puente) entre dos paradas, con una flecha quieta señalando la llegada. */
+const addRouteArc = (map: L.Map, from: { lat: number; lng: number }, to: { lat: number; lng: number }, dashed: boolean) => {
+  const arc = buildArc(from, to);
+  L.polyline(
+    arc.points.map((p): [number, number] => [p.lat, p.lng]),
+    dashed
+      ? { color: '#94a3b8', weight: 2, opacity: 0.6, dashArray: '2 9', lineCap: 'round' }
+      : { color: '#E9C46A', weight: 3, opacity: 0.85, lineJoin: 'round' }
+  ).addTo(map);
+
+  if (dashed) return; // la etapa planeada no lleva flecha: todavía no está confirmada
+
+  const arrowIcon = L.divIcon({
+    className: 'route-arrow-icon',
+    html: `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;transform:rotate(${arc.endBearing}deg);">${ROUTE_ARROW_SVG}</div>`,
+    iconSize: [20, 20],
+    iconAnchor: [10, 10],
+  });
+  L.marker([to.lat, to.lng], { icon: arrowIcon, interactive: false, keyboard: false, zIndexOffset: 1500 }).addTo(map);
 };
 
 export const IndonesiaMap: React.FC<IndonesiaMapProps> = ({
@@ -34,6 +45,10 @@ export const IndonesiaMap: React.FC<IndonesiaMapProps> = ({
   selectedIsland,
   onSelectIsland,
 }) => {
+  // El orden de la ruta es el campo `order` de cada parada (ver "Gestionar Ruta" en Zona Pareja),
+  // no el orden en que se fueron guardando: así se puede corregir sin borrar y recrear nada.
+  const orderedPins = useMemo(() => sortByOrder(islandPins), [islandPins]);
+
   useEffect(() => {
     // Check if Leaflet map container exists
     const container = document.getElementById('indonesia-leaflet-map');
@@ -63,7 +78,7 @@ export const IndonesiaMap: React.FC<IndonesiaMapProps> = ({
 
 
     // Custom Icon Generator
-    islandPins.forEach((pin) => {
+    orderedPins.forEach((pin) => {
       let iconColor = '#2A9D8F'; // visited
       if (pin.status === 'current') iconColor = '#E07A5F'; // current
       if (pin.status === 'upcoming') iconColor = '#94a3b8'; // upcoming
@@ -110,71 +125,25 @@ export const IndonesiaMap: React.FC<IndonesiaMapProps> = ({
       });
     });
 
-    // --- Recorrido: línea del camino ya hecho, línea de puntos de lo que queda, y una flecha ---
-    // que va saltando de parada en parada (en el orden en que se fueron añadiendo las paradas).
-    const donePoints: LatLng[] = islandPins
-      .filter((p) => p.status === 'visited' || p.status === 'current')
-      .map((p) => ({ lat: p.lat, lng: p.lng }));
-
-    if (donePoints.length >= 2) {
-      L.polyline(donePoints.map((p): [number, number] => [p.lat, p.lng]), {
-        color: '#E9C46A',
-        weight: 3,
-        opacity: 0.8,
-        lineJoin: 'round',
-      }).addTo(map);
+    // --- Recorrido: un arco fijo (estilo puente) por cada salto entre paradas, con su propia ---
+    // flecha señalando la llegada. En el orden real de la ruta (ver `orderedPins`), no en el orden
+    // en que se guardaron.
+    const donePins = orderedPins.filter((p) => p.status === 'visited' || p.status === 'current');
+    for (let i = 0; i < donePins.length - 1; i++) {
+      addRouteArc(map, donePins[i], donePins[i + 1], false);
     }
 
-    const currentPin = islandPins.find((p) => p.status === 'current');
-    const upcomingPins = islandPins.filter((p) => p.status === 'upcoming');
-    if (currentPin && upcomingPins.length > 0) {
-      const plannedPoints: [number, number][] = [currentPin, ...upcomingPins].map((p) => [p.lat, p.lng]);
-      L.polyline(plannedPoints, {
-        color: '#94a3b8',
-        weight: 2,
-        opacity: 0.6,
-        dashArray: '2 9',
-        lineCap: 'round',
-      }).addTo(map);
-    }
-
-    let rafId: number | null = null;
-    const schedule = buildRouteSchedule(donePoints);
-    if (schedule) {
-      const arrowIcon = L.divIcon({
-        className: 'route-plane-icon',
-        html: `<div class="route-plane-outer"><div class="route-plane-halo"></div><div class="route-plane-rotator">${ROUTE_ARROW_SVG}</div></div>`,
-        iconSize: [26, 26],
-        iconAnchor: [13, 13],
-      });
-      const firstFrame = frameAt(schedule, 0);
-      const arrowMarker = L.marker([firstFrame.position.lat, firstFrame.position.lng], {
-        icon: arrowIcon,
-        interactive: false,
-        keyboard: false,
-        zIndexOffset: 2000,
-      }).addTo(map);
-      applyRouteFrame(arrowMarker, firstFrame);
-
-      // Quien prefiere menos movimiento en pantalla ve la flecha quieta en la última parada (donde estáis ahora)
-      const reduceMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      if (reduceMotion) {
-        applyRouteFrame(arrowMarker, frameAt(schedule, schedule.totalMs - 1));
-      } else {
-        const start = performance.now();
-        const tick = (now: number) => {
-          applyRouteFrame(arrowMarker, frameAt(schedule, now - start));
-          rafId = requestAnimationFrame(tick);
-        };
-        rafId = requestAnimationFrame(tick);
-      }
+    const currentPin = orderedPins.find((p) => p.status === 'current');
+    const upcomingPins = orderedPins.filter((p) => p.status === 'upcoming');
+    const plannedPins = currentPin ? [currentPin, ...upcomingPins] : upcomingPins;
+    for (let i = 0; i < plannedPins.length - 1; i++) {
+      addRouteArc(map, plannedPins[i], plannedPins[i + 1], true);
     }
 
     return () => {
-      if (rafId !== null) cancelAnimationFrame(rafId);
       map.remove();
     };
-  }, [islandPins, onSelectIsland]);
+  }, [orderedPins, onSelectIsland]);
 
   return (
     <div className="w-full space-y-4">
@@ -202,7 +171,7 @@ export const IndonesiaMap: React.FC<IndonesiaMapProps> = ({
           >
             Todas las Islas
           </button>
-          {islandPins.map((pin) => (
+          {orderedPins.map((pin) => (
             <button
               key={pin.id}
               onClick={() => onSelectIsland(selectedIsland === pin.island ? null : pin.island)}
@@ -255,7 +224,7 @@ export const IndonesiaMap: React.FC<IndonesiaMapProps> = ({
 
       {/* Island Highlights Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
-        {islandPins.map((pin) => (
+        {orderedPins.map((pin) => (
           <div
             key={pin.id}
             onClick={() => onSelectIsland(selectedIsland === pin.island ? null : pin.island)}

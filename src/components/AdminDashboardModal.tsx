@@ -3,13 +3,14 @@ import L from 'leaflet';
 import type { Post, Story, IslandPin, TripStats, Comment, Dive } from '../types/blog';
 import { DiveLogbook } from './DiveLogbook';
 import type { LoginResult } from '../utils/api';
-import { 
-  X, Lock, KeyRound, Plus, Edit, Trash2, Save, Upload, MapPin, 
-  Film, Settings, Download, RefreshCw, CheckCircle2, LogOut, Waves
+import {
+  X, Lock, KeyRound, Plus, Edit, Trash2, Save, Upload, MapPin,
+  Film, Settings, Download, RefreshCw, CheckCircle2, LogOut, Waves, ChevronUp, ChevronDown
 } from 'lucide-react';
 import { exportAllBlogData, readLocalBlogData } from '../utils/storage';
 import { uploadMedia, formatImageUrl, MAX_VIDEO_MB } from '../utils/media';
 import { calculateCurrentDay } from '../utils/dateUtils';
+import { sortByOrder, nextOrder, moveItem, renumber } from '../utils/route';
 
 // Sugerencias de isla/región además de las de vuestra ruta y vuestros posts
 const DEFAULT_REGIONS = [
@@ -125,6 +126,9 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const islandOptions = useMemo(() => uniqueNames(tripIslands, DEFAULT_REGIONS), [tripIslands]);
   // Botones de un toque: vuestras islas; y mientras no haya ninguna, las regiones más comunes
   const islandChips = tripIslands.length > 0 ? tripIslands : DEFAULT_REGIONS.slice(0, 8);
+
+  // Paradas de la ruta en su orden real (campo `order`), no en el orden en que se fueron guardando
+  const sortedPins = useMemo(() => sortByOrder(islandPins), [islandPins]);
 
   // Map Pin Form State
   const [editingMapPinId, setEditingMapPinId] = useState<string | null>(null);
@@ -390,6 +394,9 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       return;
     }
 
+    // Nueva: se añade al final de la ruta, como hasta ahora. Editando: conserva su posición;
+    // para cambiar el orden se usan las flechas ▲▼ de la lista de abajo, no este formulario.
+    const existingOrder = editingMapPinId ? islandPins.find((p) => p.id === editingMapPinId)?.order : undefined;
     const newPin: IslandPin = {
       id: editingMapPinId || `pin-${Date.now()}`,
       name: mapPinName,
@@ -400,6 +407,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       lng: mapPinLng,
       status: mapPinStatus,
       visitsCount: 0,
+      order: existingOrder ?? nextOrder(islandPins),
     };
 
     let newPins;
@@ -432,6 +440,15 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       const newPins = islandPins.filter(p => p.id !== pinId);
       if (await withSaving(() => onSaveIslandPins(newPins))) showNotice('Parada eliminada');
     }
+  };
+
+  // Sube o baja una parada en la ruta (corrige el orden sin tener que borrar y recrear nada)
+  const handleMovePin = async (pinId: string, direction: -1 | 1) => {
+    const index = sortedPins.findIndex((p) => p.id === pinId);
+    if (index < 0) return;
+    const moved = moveItem(sortedPins, index, index + direction);
+    if (moved === sortedPins) return; // ya estaba al principio o al final
+    if (await withSaving(() => onSaveIslandPins(renumber(moved)))) showNotice('Orden de la ruta actualizado');
   };
 
   const resetMapPinForm = () => {
@@ -1321,26 +1338,51 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
 
                 {/* List of Pins */}
                 <div className="glass-card p-6 rounded-3xl border border-white/10 space-y-4">
-                  <h3 className="font-serif-title text-xl font-bold text-white mb-2">Paradas Existentes ({islandPins.length})</h3>
-                  
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {islandPins.map((pin) => (
-                      <div key={pin.id} className="glass-panel p-4 rounded-xl border border-white/10 flex flex-col justify-between space-y-3">
-                        <div className="flex items-start justify-between">
-                          <div>
-                            <h4 className="font-bold text-sm text-white">{pin.name}</h4>
-                            <p className="text-[10px] text-emerald-300/60 uppercase tracking-wider">{pin.island}</p>
+                  <div>
+                    <h3 className="font-serif-title text-xl font-bold text-white">Paradas Existentes ({sortedPins.length})</h3>
+                    <p className="text-[11px] text-emerald-300/60">
+                      Este es el orden real de la ruta (el que sigue el mapa). Si alguna está mal, súbela o bájala con las flechas.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    {sortedPins.map((pin, index) => (
+                      <div key={pin.id} data-pin-id={pin.id} className="glass-panel p-3 rounded-xl border border-white/10 flex items-center gap-3">
+                        <span className="shrink-0 h-7 w-7 rounded-full bg-black/40 border border-white/15 flex items-center justify-center text-xs font-bold text-emerald-200">
+                          {index + 1}
+                        </span>
+
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h4 className="font-bold text-sm text-white truncate">{pin.name}</h4>
+                            <span className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                              pin.status === 'visited' ? 'bg-[#2A9D8F]/20 text-[#2A9D8F]' :
+                              pin.status === 'current' ? 'bg-[#E07A5F]/20 text-[#E07A5F]' :
+                              'bg-slate-700/40 text-slate-300'
+                            }`}>
+                              {pin.status === 'visited' ? 'Visitada' : pin.status === 'current' ? 'Actual' : 'Próxima'}
+                            </span>
                           </div>
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                            pin.status === 'visited' ? 'bg-[#2A9D8F]/20 text-[#2A9D8F]' :
-                            pin.status === 'current' ? 'bg-[#E07A5F]/20 text-[#E07A5F]' :
-                            'bg-slate-700/40 text-slate-300'
-                          }`}>
-                            {pin.status === 'visited' ? 'Visitada' : pin.status === 'current' ? 'Actual' : 'Próxima'}
-                          </span>
+                          <p className="text-[10px] text-emerald-300/60 uppercase tracking-wider truncate">{pin.island}</p>
                         </div>
 
-                        <div className="flex items-center justify-end space-x-2 pt-2 border-t border-white/5">
+                        <div className="shrink-0 flex items-center gap-1.5">
+                          <button
+                            onClick={() => handleMovePin(pin.id, -1)}
+                            disabled={index === 0 || isSaving}
+                            className="p-1.5 rounded-lg bg-white/10 text-emerald-100 hover:bg-white/20 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                            title="Subir (visitar antes)"
+                          >
+                            <ChevronUp className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => handleMovePin(pin.id, 1)}
+                            disabled={index === sortedPins.length - 1 || isSaving}
+                            className="p-1.5 rounded-lg bg-white/10 text-emerald-100 hover:bg-white/20 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                            title="Bajar (visitar después)"
+                          >
+                            <ChevronDown className="h-4 w-4" />
+                          </button>
                           <button
                             onClick={() => handleEditMapPin(pin)}
                             className="p-1.5 rounded-lg bg-blue-600/30 text-blue-200 hover:bg-blue-600/50 transition-colors"

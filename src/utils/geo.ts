@@ -1,7 +1,7 @@
 /**
- * Geometría pura para animar una flecha que recorre las paradas de la ruta, saltando de una a la
- * siguiente. Sin dependencias de Leaflet ni del DOM, para poder probarla con Node antes de usarla
- * en el mapa.
+ * Geometría pura para dibujar el recorrido en el mapa como una cadena de arcos fijos (estilo "puente"),
+ * cada uno con su propia flecha señalando hacia la parada de llegada. Sin dependencias de Leaflet ni
+ * del DOM, para poder probarla con Node antes de usarla en el mapa.
  */
 
 export interface LatLng {
@@ -11,7 +11,6 @@ export interface LatLng {
 
 const toRad = (deg: number): number => (deg * Math.PI) / 180;
 const toDeg = (rad: number): number => (rad * 180) / Math.PI;
-const clamp = (n: number, min: number, max: number): number => Math.min(max, Math.max(min, n));
 
 /** Distancia en línea recta entre dos puntos, en kilómetros (fórmula de Haversine). */
 export const haversineKm = (a: LatLng, b: LatLng): number => {
@@ -22,7 +21,7 @@ export const haversineKm = (a: LatLng, b: LatLng): number => {
   return R * 2 * Math.atan2(Math.sqrt(sa), Math.sqrt(1 - sa));
 };
 
-/** Rumbo inicial de a hacia b, en grados desde el norte (0-360, sentido horario). 0° = hacia el norte. */
+/** Rumbo de a hacia b, en grados desde el norte (0-360, sentido horario). 0° = hacia el norte. */
 export const bearingDeg = (a: LatLng, b: LatLng): number => {
   const φ1 = toRad(a.lat);
   const φ2 = toRad(b.lat);
@@ -32,96 +31,43 @@ export const bearingDeg = (a: LatLng, b: LatLng): number => {
   return (toDeg(Math.atan2(y, x)) + 360) % 360;
 };
 
-/** Interpolación lineal entre dos puntos: coincide con la línea recta que dibuja Leaflet entre ellos. */
-export const lerpLatLng = (a: LatLng, b: LatLng, t: number): LatLng => ({
-  lat: a.lat + (b.lat - a.lat) * t,
-  lng: a.lng + (b.lng - a.lng) * t,
-});
+// Cuánto se curva el arco: una fracción de la distancia entre los dos puntos, así el "bombeo" es
+// proporcional en los tramos cortos y en los largos (siempre hacia el mismo lado del trayecto, como
+// en los mapas de rutas de vuelo, nunca al azar).
+const ARC_CURVATURE = 0.16;
+const ARC_SEGMENTS = 28;
 
-// "Velocidad" puramente visual del recorrido (no real): cuánto dura cada salto y cada parada.
-const MIN_TRAVEL_MS = 900;
-const MAX_TRAVEL_MS = 3200;
-const KM_PER_MS = 400 / 1000; // 400 km equivalen a 1 segundo de vuelo
-const WAYPOINT_PAUSE_MS = 1100;
-const FINAL_PAUSE_MS = 2600; // pausa en la última parada antes de reiniciar el ciclo
-
-export interface RouteLeg {
-  from: LatLng;
-  to: LatLng;
-  distanceKm: number;
-  bearing: number;
-  travelMs: number;
-  pauseMs: number;
-  startsAtMs: number; // instante (dentro del ciclo) en que empieza a moverse hacia `to`
-  endsAtMs: number; // instante en que termina la pausa en `to` (y empieza el siguiente tramo)
-}
-
-export interface RouteSchedule {
-  legs: RouteLeg[];
-  totalMs: number; // duración completa de un ciclo
+export interface Arc {
+  /** Puntos de la curva, de a a b, listos para dibujar como polilínea. */
+  points: LatLng[];
+  /** Rumbo de llegada a b (para orientar la flecha al final del arco). */
+  endBearing: number;
 }
 
 /**
- * Construye el guion de la animación a partir de las paradas en orden de visita.
- * Devuelve null si hay menos de dos puntos (no hay nada que recorrer).
+ * Arco entre dos puntos como curva de Bézier cuadrática: el punto de control se desplaza en
+ * perpendicular al tramo recto, una fracción (ARC_CURVATURE) de su longitud. Es la misma técnica que
+ * usan los mapas de rutas de vuelo para dibujar un "puente" en vez de una línea recta.
  */
-export const buildRouteSchedule = (points: LatLng[]): RouteSchedule | null => {
-  if (points.length < 2) return null;
+export const buildArc = (a: LatLng, b: LatLng): Arc => {
+  const dx = b.lng - a.lng;
+  const dy = b.lat - a.lat;
+  // Perpendicular a (dx,dy), siempre hacia el mismo lado (no depende de la dirección del tramo)
+  const control: LatLng = {
+    lat: (a.lat + b.lat) / 2 + dx * ARC_CURVATURE,
+    lng: (a.lng + b.lng) / 2 - dy * ARC_CURVATURE,
+  };
 
-  const legs: RouteLeg[] = [];
-  let cursor = WAYPOINT_PAUSE_MS; // pequeña pausa inicial en el primer punto antes de arrancar
-
-  for (let i = 0; i < points.length - 1; i++) {
-    const from = points[i];
-    const to = points[i + 1];
-    const distanceKm = haversineKm(from, to);
-    const travelMs = clamp(distanceKm / KM_PER_MS, MIN_TRAVEL_MS, MAX_TRAVEL_MS);
-    const isLast = i === points.length - 2;
-    const pauseMs = isLast ? FINAL_PAUSE_MS : WAYPOINT_PAUSE_MS;
-    const startsAtMs = cursor;
-    cursor = startsAtMs + travelMs + pauseMs;
-    legs.push({ from, to, distanceKm, bearing: bearingDeg(from, to), travelMs, pauseMs, startsAtMs, endsAtMs: cursor });
+  const points: LatLng[] = [];
+  for (let i = 0; i <= ARC_SEGMENTS; i++) {
+    const t = i / ARC_SEGMENTS;
+    const u = 1 - t;
+    points.push({
+      lat: u * u * a.lat + 2 * u * t * control.lat + t * t * b.lat,
+      lng: u * u * a.lng + 2 * u * t * control.lng + t * t * b.lng,
+    });
   }
 
-  return { legs, totalMs: cursor };
-};
-
-export interface RouteFrame {
-  position: LatLng;
-  bearing: number;
-  /** true si en este instante la flecha está detenida en una parada (no volando entre dos puntos) */
-  paused: boolean;
-}
-
-/**
- * Envuelve un instante dentro de [0, period). Un solo `%` (no dos, como en el típico
- * `((t % p) + p) % p`): para un t ya positivo y menor que period, fmod lo devuelve exacto, sin
- * redondeo; ese redondeo de más es justo lo que podía desplazar un instante justo en el límite de
- * una parada (p. ej. la llegada exacta a una isla) al tramo equivocado.
- */
-const wrapMs = (t: number, period: number): number => {
-  const r = t % period;
-  return r < 0 ? r + period : r;
-};
-
-/** Dado un instante cualquiera (se repite en bucle cada `totalMs`), calcula dónde está la flecha. */
-export const frameAt = (schedule: RouteSchedule, tMs: number): RouteFrame => {
-  const t = wrapMs(tMs, schedule.totalMs);
-  const firstLeg = schedule.legs[0];
-
-  if (t < firstLeg.startsAtMs) {
-    return { position: firstLeg.from, bearing: firstLeg.bearing, paused: true };
-  }
-  for (const leg of schedule.legs) {
-    const travelEndsAtMs = leg.startsAtMs + leg.travelMs;
-    if (t < travelEndsAtMs) {
-      const frac = leg.travelMs <= 0 ? 1 : (t - leg.startsAtMs) / leg.travelMs;
-      return { position: lerpLatLng(leg.from, leg.to, frac), bearing: leg.bearing, paused: false };
-    }
-    if (t < leg.endsAtMs) {
-      return { position: leg.to, bearing: leg.bearing, paused: true };
-    }
-  }
-  const lastLeg = schedule.legs[schedule.legs.length - 1];
-  return { position: lastLeg.to, bearing: lastLeg.bearing, paused: true };
+  // Tangente de la curva en t=1: la dirección desde el punto de control hasta b
+  return { points, endBearing: bearingDeg(control, b) };
 };
